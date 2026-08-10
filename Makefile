@@ -70,7 +70,7 @@ CLOUD_INIT_ISO = $(BUILD_DIR)/cloud-init.iso
 TEST_EXTRACT_DIR = $(BUILD_DIR)/test-extract
 TEST_IMAGE_NAME = $(TEST_EXTRACT_DIR)/$(FINAL_IMAGE_NAME)
 
-.PHONY: help setup prepare download cloud-init run sysprep build test-oci push clean test-run
+.PHONY: help setup prepare download cloud-init run pin-hostkey sysprep build test-oci push clean test-run
 
 help:
 	@echo "Available commands (Host: $(OS) $(HOST_ARCH)):"
@@ -79,6 +79,7 @@ help:
 	@echo "  make download    - Download the $(ARCH) Ubuntu image and create pristine base"
 	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO"
 	@echo "  make run         - Boot VM. Override arch with 'make run ARCH=amd64' (Emulation)"
+	@echo "  make pin-hostkey - Manually pin VM's SSH host key if 'make run' gave up waiting"
 	@echo "  make sysprep     - Connect to the running VM, clean cloud-init data, and shut it down"
 	@echo "  make build       - Finalize the instance artifact for OCI pushing"
 	@echo "  make test-oci    - Pull the $(ARCH) QCOW2 from OCI using ORAS and verify it"
@@ -163,27 +164,57 @@ run: setup
 	@echo "🔐 Username: ubuntu | Password: ubuntu"
 	@echo "🔌 To connect via SSH from your host terminal: 'ssh -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost'"
 	@echo "✨ When finished, run 'make sysprep' in another terminal to seal the Golden Image."
-	$(QEMU_BIN) \
-		-M $(QEMU_MACHINE) \
-		$(QEMU_ACCEL) \
-		-smp 4 \
-		-m 4096 \
-		-drive if=pflash,format=raw,readonly=on,file=$(EFI_CODE) \
-		-drive if=pflash,format=raw,file=$(VARS_FILE) \
-		-drive if=virtio,file=$(INSTANCE_DISK),format=qcow2 \
-		-drive if=virtio,file=$(CLOUD_INIT_ISO),format=raw \
-		-smbios type=1,serial=ds=nocloud \
-		-device virtio-gpu-pci \
-		-display cocoa,show-cursor=on \
-		-device virtio-mouse-pci \
-		-device virtio-keyboard-pci \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22
+	@ssh-keygen -R "[localhost]:2222" >/dev/null 2>&1 || true
+	@( \
+		$(QEMU_BIN) \
+			-M $(QEMU_MACHINE) \
+			$(QEMU_ACCEL) \
+			-smp 4 \
+			-m 4096 \
+			-drive if=pflash,format=raw,readonly=on,file=$(EFI_CODE) \
+			-drive if=pflash,format=raw,file=$(VARS_FILE) \
+			-drive if=virtio,file=$(INSTANCE_DISK),format=qcow2 \
+			-drive if=virtio,file=$(CLOUD_INIT_ISO),format=raw \
+			-smbios type=1,serial=ds=nocloud \
+			-device virtio-gpu-pci \
+			-display cocoa,show-cursor=on \
+			-device virtio-mouse-pci \
+			-device virtio-keyboard-pci \
+			-device virtio-net-pci,netdev=net0 \
+			-netdev user,id=net0,hostfwd=tcp::2222-:22 & \
+		QEMU_PID=$$!; \
+		echo "🔑 Waiting for VM SSH to come up so its host key can be trusted (first boot installs the desktop, this can take 5-10+ min)..."; \
+		KEY_PINNED=0; \
+		for i in $$(seq 1 300); do \
+			ssh-keyscan -4 -T 2 -p 2222 -H localhost >> ~/.ssh/known_hosts 2>/dev/null && { KEY_PINNED=1; break; }; \
+			if [ $$((i % 15)) -eq 0 ]; then echo "   ...still waiting ($$((i * 2))s elapsed)"; fi; \
+			sleep 2; \
+		done; \
+		if [ "$$KEY_PINNED" = "1" ]; then \
+			echo "✅ Host key pinned. Future 'ssh -p 2222 ubuntu@localhost' won't prompt."; \
+		else \
+			echo "⚠️  Gave up waiting for VM SSH after 10 minutes. Once the VM finishes booting, run 'make pin-hostkey' in another terminal."; \
+		fi; \
+		wait $$QEMU_PID \
+	)
+
+pin-hostkey:
+	@ssh-keygen -R "[localhost]:2222" >/dev/null 2>&1 || true
+	@KEY_PINNED=0; \
+	for i in $$(seq 1 30); do \
+		ssh-keyscan -4 -T 2 -p 2222 -H localhost >> ~/.ssh/known_hosts 2>/dev/null && { KEY_PINNED=1; break; }; \
+		sleep 2; \
+	done; \
+	if [ "$$KEY_PINNED" = "1" ]; then \
+		echo "✅ Host key pinned. Future 'ssh -p 2222 ubuntu@localhost' won't prompt."; \
+	else \
+		echo "❌ VM SSH still not reachable on port 2222 after 1 minute. Is it still booting/installing?"; \
+	fi
 
 sysprep:
 	@echo "🧼 === Starting Golden Image Sysprep === 🧼"
 	@echo "Connecting to VM to clean cloud-init data, wipe SSH keys, and reset machine-id..."
-	@ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost \
+	@ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost \
 		"sudo cloud-init clean --logs --machine-id && sudo rm -f /home/ubuntu/.ssh/authorized_keys && sudo rm -f /etc/ssh/ssh_host_* && sudo sync && sudo halt" || true
 	@echo "✅ Cleanup commands sent! The VM is shutting down."
 	@echo "   You can now safely close the QEMU window and run 'make build'."
@@ -225,3 +256,5 @@ push:
 clean:
 	@echo "🧹 Cleaning up build directory..."
 	rm -rf $(BUILD_DIR)
+	@echo "🧹 Removing stale [localhost]:2222 entry from known_hosts..."
+	@ssh-keygen -R "[localhost]:2222" 2>/dev/null || true

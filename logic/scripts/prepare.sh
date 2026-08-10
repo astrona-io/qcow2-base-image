@@ -28,7 +28,13 @@ envsubst '${SSH_KEY}' < "$TEMPLATE_DIR/user-data.template" > "$BUILD_DIR/user-da
 echo "   ✅ Compiled user-data successfully."
 
 echo "📝 Step 3: Staging $BUILD_DIR/meta-data..."
-cp "$TEMPLATE_DIR/meta-data" "$BUILD_DIR/meta-data"
-echo "   ✅ Copied meta-data successfully."
+# Give every build a unique instance-id. cloud-init only runs per-instance
+# modules (users, ssh_authorized_keys, packages, power_state, ...) once per
+# instance-id, so re-using a static id causes cloud-init to silently skip
+# re-provisioning (e.g. injecting a freshly regenerated SSH key) on VMs
+# whose instance disk already booted once before.
+INSTANCE_ID="ubuntu-24-04-desktop-base-$(date +%s)"
+sed "s/^instance-id:.*/instance-id: ${INSTANCE_ID}/" "$TEMPLATE_DIR/meta-data" > "$BUILD_DIR/meta-data"
+echo "   ✅ Compiled meta-data with instance-id=${INSTANCE_ID}."
 
 echo "🚀 Preparation Complete!"
