@@ -1,5 +1,7 @@
 # QCOW2 Golden Image Builder
 
+[![Liberapay](https://img.shields.io/badge/Liberapay-Support_Astrona.io-F6C915?logo=liberapay&logoColor=black&style=for-the-badge)](https://liberapay.com/Astrona.io)
+
 This repository automates the creation, customization, and distribution of
 generic QEMU virtual machine templates (Golden Images) across multiple
 architectures (`arm64` and `amd64`), on macOS, Linux, and in GitHub Actions.
@@ -8,14 +10,6 @@ By default, it builds a lightweight **Ubuntu 24.04 LTS (Noble Numbat)**
 Desktop template, but the underlying mechanics (cloud-init compilation,
 sysprep wiping, and ORAS distribution) are universally applicable to modern
 Linux distributions.
-
-## 💖 Support & Sponsoring
-
-If you find this project helpful for your infrastructure, test labs, or daily workflow, please consider supporting the development! Your sponsorship helps maintain and expand these open-source tools.
-
-You can support the project via Liberapay:
-
-[![Liberapay](https://img.shields.io/badge/Liberapay-Support_Astrona.io-F6C915?logo=liberapay&logoColor=black&style=for-the-badge)](https://liberapay.com/Astrona.io)
 
 ## Overview
 
