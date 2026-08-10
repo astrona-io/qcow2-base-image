@@ -19,7 +19,7 @@ CLOUD_INIT_ISO = $(BUILD_DIR)/cloud-init.iso
 TEST_EXTRACT_DIR = $(BUILD_DIR)/test-extract
 TEST_IMAGE_NAME = $(TEST_EXTRACT_DIR)/$(FINAL_IMAGE_NAME)
 
-.PHONY: help setup prepare download cloud-init run build test-oci push clean test-run
+.PHONY: help setup prepare download cloud-init run sysprep build test-oci push clean test-run
 
 help:
 	@echo "Available commands:"
@@ -28,6 +28,7 @@ help:
 	@echo "  make download    - Download the official Ubuntu image and create a pristine 25G base-ubuntu.qcow2"
 	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO (using hdiutil)"
 	@echo "  make run         - Spawn a fresh instance.qcow2 from the base, launch VM, and install Desktop"
+	@echo "  make sysprep     - Connect to the running VM, clean cloud-init data/SSH keys, and shut it down"
 	@echo "  make build       - Rename instance.qcow2 to $(FINAL_IMAGE_NAME) and build the OCI container"
 	@echo "  make test-oci    - Extract the QCOW2 from the OCI container and verify its integrity"
 	@echo "  make push        - Push the OCI container image to the public registry ($(OCI_IMAGE))"
@@ -102,6 +103,7 @@ run: setup
 	@echo "👀 A native macOS QEMU window will open."
 	@echo "🔐 Username: ubuntu | Password: ubuntu (Automatic graphical login is configured!)"
 	@echo "🔌 To connect via SSH from your host terminal: 'ssh -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost'"
+	@echo "✨ When finished, run 'make sysprep' in another terminal to seal the Golden Image and shut it down."
 	qemu-system-aarch64 \
 		-M virt,highmem=on \
 		-accel hvf \
@@ -119,6 +121,14 @@ run: setup
 		-device virtio-keyboard-pci \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::2222-:22
+
+sysprep:
+	@echo "🧼 === Starting Golden Image Sysprep === 🧼"
+	@echo "Connecting to VM to clean cloud-init data, wipe SSH keys, and reset machine-id..."
+	@ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost \
+		"sudo cloud-init clean --logs --machine-id && sudo rm -f /home/ubuntu/.ssh/authorized_keys && sudo rm -f /etc/ssh/ssh_host_* && sudo sync && sudo halt" || true
+	@echo "✅ Cleanup commands sent! The VM is shutting down."
+	@echo "   You can now safely close the QEMU window and run 'make build'."
 
 build: setup
 	@if [ ! -f $(INSTANCE_DISK) ]; then \

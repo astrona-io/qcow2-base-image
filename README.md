@@ -83,8 +83,15 @@ make run
   ssh -i build/id_ed25519 -p 2222 ubuntu@localhost
   ```
 
-### 5. Package as OCI Container
-Once you have shut down the VM and are satisfied with the customized VM, build the container image. This target will automatically rename `instance.qcow2` into the final release-ready `ubuntu-24.04-desktop.qcow2` artifact and wrap it:
+### 5. Seal the Golden Image (Sysprep)
+To make your VM disk reusable by other developers or test labs, you must erase its memory of your specific SSH keys and initial setup. While the VM is still running, open a new terminal and run:
+```bash
+make sysprep
+```
+This command automatically connects via SSH, wipes the `cloud-init` logs, deletes your temporary SSH keys, resets the machine ID, and securely powers down the VM.
+
+### 6. Package as OCI Container
+Once the VM has shut down from the sysprep command, build the container image. This target will automatically rename `instance.qcow2` into the final release-ready `ubuntu-24.04-desktop.qcow2` artifact and wrap it:
 ```bash
 make build
 ```
