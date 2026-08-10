@@ -1,19 +1,65 @@
-# Makefile for building, running, and shipping QEMU Ubuntu Desktop Templates on Apple Silicon
+# Makefile for building, running, and shipping QEMU Ubuntu Desktop Templates
+
+# --- Architecture Detection & Configuration ---
+HOST_ARCH := $(shell uname -m)
+ifeq ($(HOST_ARCH),x86_64)
+	HOST_ARCH = amd64
+endif
+ifeq ($(HOST_ARCH),aarch64)
+	HOST_ARCH = arm64
+endif
+ifeq ($(HOST_ARCH),arm64)
+	HOST_ARCH = arm64
+endif
+
+ARCH ?= $(HOST_ARCH)
+OS := $(shell uname -s)
+
+# Architecture-specific QEMU configurations
+ifeq ($(ARCH),arm64)
+	QEMU_BIN = qemu-system-aarch64
+	QEMU_MACHINE = virt,highmem=on
+	EFI_CODE = /opt/homebrew/share/qemu/edk2-aarch64-code.fd
+	EFI_VARS_SRC = /opt/homebrew/share/qemu/edk2-arm-vars.fd
+else ifeq ($(ARCH),amd64)
+	QEMU_BIN = qemu-system-x86_64
+	QEMU_MACHINE = q35
+	EFI_CODE = /opt/homebrew/share/qemu/edk2-x86_64-code.fd
+	EFI_VARS_SRC = /opt/homebrew/share/qemu/edk2-i386-vars.fd
+else
+	$(error Unsupported architecture: $(ARCH))
+endif
+
+# Hardware Acceleration vs Emulation Logic
+ifeq ($(HOST_ARCH),$(ARCH))
+	# Native execution
+	ifeq ($(OS),Darwin)
+		QEMU_ACCEL = -accel hvf -cpu host
+	else
+		QEMU_ACCEL = -accel kvm -cpu host
+	endif
+else
+	# Cross-architecture emulation
+	ifeq ($(ARCH),arm64)
+		QEMU_ACCEL = -cpu cortex-a57
+	else
+		QEMU_ACCEL = -cpu qemu64
+	endif
+endif
 
 BUILD_DIR = build
-FINAL_IMAGE_NAME = ubuntu-24.04-desktop.qcow2
-INSTANCE_DISK = $(BUILD_DIR)/instance.qcow2
-BASE_DISK = $(BUILD_DIR)/base-ubuntu.qcow2
+FINAL_IMAGE_NAME = ubuntu-24.04-desktop-$(ARCH).qcow2
+INSTANCE_DISK = $(BUILD_DIR)/instance-$(ARCH).qcow2
+BASE_DISK = $(BUILD_DIR)/base-ubuntu-$(ARCH).qcow2
 
-IMAGE_URL = https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img
-DOWNLOADED_IMG = $(BUILD_DIR)/noble-server-cloudimg-arm64.img
+IMAGE_URL = https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-$(ARCH).img
+DOWNLOADED_IMG = $(BUILD_DIR)/noble-server-cloudimg-$(ARCH).img
 
 REGISTRY ?= ghcr.io
 GH_USER ?= $(shell git config user.name 2>/dev/null || echo "your-username")
-OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/ubuntu-24.04-qemu-desktop:latest
+OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/ubuntu-24.04-qemu-desktop:$(ARCH)
 
-EFI_CODE = /opt/homebrew/share/qemu/edk2-aarch64-code.fd
-VARS_FILE = $(BUILD_DIR)/vars.fd
+VARS_FILE = $(BUILD_DIR)/vars-$(ARCH).fd
 CLOUD_INIT_ISO = $(BUILD_DIR)/cloud-init.iso
 
 TEST_EXTRACT_DIR = $(BUILD_DIR)/test-extract
@@ -22,40 +68,47 @@ TEST_IMAGE_NAME = $(TEST_EXTRACT_DIR)/$(FINAL_IMAGE_NAME)
 .PHONY: help setup prepare download cloud-init run sysprep build test-oci push clean test-run
 
 help:
-	@echo "Available commands:"
-	@echo "  make test-run    - QUICKSTART: Runs prepare, download, cloud-init, and run sequentially"
-	@echo "  make prepare     - Run logic/scripts/prepare.sh to generate cloud-init configs inside build/"
-	@echo "  make download    - Download the official Ubuntu image and create a pristine 25G base-ubuntu.qcow2"
-	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO (using hdiutil)"
-	@echo "  make run         - Spawn a fresh instance.qcow2 from the base, launch VM, and install Desktop"
-	@echo "  make sysprep     - Connect to the running VM, clean cloud-init data/SSH keys, and shut it down"
-	@echo "  make build       - Finalize the instance.qcow2 artifact for OCI pushing"
-	@echo "  make test-oci    - Pull the QCOW2 from the OCI registry using ORAS and verify it"
-	@echo "  make push        - Push the raw QCOW2 artifact to the OCI registry using ORAS ($(OCI_IMAGE))"
+	@echo "Available commands (Host: $(OS) $(HOST_ARCH)):"
+	@echo "  make test-run    - QUICKSTART: Runs the entire pipeline sequentially for $(ARCH)"
+	@echo "  make prepare     - Run logic/scripts/prepare.sh to generate cloud-init configs"
+	@echo "  make download    - Download the $(ARCH) Ubuntu image and create pristine base"
+	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO"
+	@echo "  make run         - Boot VM. Override arch with 'make run ARCH=amd64' (Emulation)"
+	@echo "  make sysprep     - Connect to the running VM, clean cloud-init data, and shut it down"
+	@echo "  make build       - Finalize the instance artifact for OCI pushing"
+	@echo "  make test-oci    - Pull the $(ARCH) QCOW2 from OCI using ORAS and verify it"
+	@echo "  make push        - Push the $(ARCH) QCOW2 artifact to OCI using ORAS"
 	@echo "  make clean       - Remove the entire build/ directory"
 
 test-run:
-	@echo "🔥 === Starting Full Pipeline Test Run === 🔥"
-	$(MAKE) prepare
-	$(MAKE) download
-	$(MAKE) cloud-init
-	$(MAKE) run
+	@echo "🔥 === Starting Full Pipeline Test Run for $(ARCH) === 🔥"
+	$(MAKE) prepare ARCH=$(ARCH)
+	$(MAKE) download ARCH=$(ARCH)
+	$(MAKE) cloud-init ARCH=$(ARCH)
+	$(MAKE) run ARCH=$(ARCH)
 
 setup:
 	@mkdir -p $(BUILD_DIR)
 
 prepare: setup
 	./logic/scripts/prepare.sh
+	@if [ -f $(EFI_VARS_SRC) ]; then \
+		cp $(EFI_VARS_SRC) $(VARS_FILE); \
+		echo "✅ Copied $(ARCH) EFI vars to $(VARS_FILE)"; \
+	else \
+		echo "⚠️ Warning: QEMU EFI vars not found at $(EFI_VARS_SRC)"; \
+		touch $(VARS_FILE); \
+	fi
 
 download: setup
 	@if [ ! -f $(DOWNLOADED_IMG) ]; then \
-		echo "🌍 Downloading official Ubuntu 24.04 LTS ARM64 Cloud Image..."; \
+		echo "🌍 Downloading official Ubuntu 24.04 LTS $(ARCH) Cloud Image..."; \
 		curl -L -o $(DOWNLOADED_IMG) $(IMAGE_URL); \
 	else \
 		echo "✅ $(DOWNLOADED_IMG) already exists."; \
 	fi
 	@if [ ! -f $(BASE_DISK) ]; then \
-		echo "⚙️  Converting downloaded image to pristine QCOW2 base disk..."; \
+		echo "⚙️  Converting downloaded image to pristine $(ARCH) QCOW2 base disk..."; \
 		qemu-img convert -f qcow2 -O qcow2 $(DOWNLOADED_IMG) $(BASE_DISK); \
 		echo "📏 Resizing pristine base disk to 25G..."; \
 		qemu-img resize $(BASE_DISK) 25G; \
@@ -86,28 +139,28 @@ run: setup
 	fi
 	@if [ ! -f $(VARS_FILE) ]; then \
 		echo "⚠️  Warning: $(VARS_FILE) not found. Running prepare target..."; \
-		$(MAKE) prepare; \
+		$(MAKE) prepare ARCH=$(ARCH); \
 	fi
 	@if [ ! -f $(EFI_CODE) ]; then \
-		echo "❌ Error: QEMU EFI firmware not found at $(EFI_CODE)."; \
-		echo "💡 Please install qemu via Homebrew: 'brew install qemu'"; \
+		echo "❌ Error: $(ARCH) EFI firmware not found at $(EFI_CODE)."; \
+		echo "💡 Please install the appropriate qemu packages."; \
 		exit 1; \
 	fi
 	@if [ ! -f $(INSTANCE_DISK) ]; then \
-		echo "👯 Creating a fresh ephemeral instance.qcow2 from pristine base-ubuntu.qcow2..."; \
+		echo "👯 Creating a fresh ephemeral instance for $(ARCH)..."; \
 		cp $(BASE_DISK) $(INSTANCE_DISK); \
 	else \
 		echo "✅ Using existing $(INSTANCE_DISK)."; \
 	fi
-	@echo "🖥️  Launching Desktop VM with QEMU (using HVF and Cocoa display)..."
+	@echo "🖥️  Launching $(ARCH) Desktop VM with $(QEMU_BIN)..."
+	@echo "🚀 Acceleration Mode: $(QEMU_ACCEL)"
 	@echo "👀 A native macOS QEMU window will open."
-	@echo "🔐 Username: ubuntu | Password: ubuntu (Automatic graphical login is configured!)"
+	@echo "🔐 Username: ubuntu | Password: ubuntu"
 	@echo "🔌 To connect via SSH from your host terminal: 'ssh -i $(BUILD_DIR)/id_ed25519 -p 2222 ubuntu@localhost'"
-	@echo "✨ When finished, run 'make sysprep' in another terminal to seal the Golden Image and shut it down."
-	qemu-system-aarch64 \
-		-M virt,highmem=on \
-		-accel hvf \
-		-cpu host \
+	@echo "✨ When finished, run 'make sysprep' in another terminal to seal the Golden Image."
+	$(QEMU_BIN) \
+		-M $(QEMU_MACHINE) \
+		$(QEMU_ACCEL) \
 		-smp 4 \
 		-m 4096 \
 		-drive if=pflash,format=raw,readonly=on,file=$(EFI_CODE) \

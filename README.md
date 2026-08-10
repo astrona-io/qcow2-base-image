@@ -45,6 +45,22 @@ make test-run
 ```
 This will automatically execute **Prepare**, **Download**, **Cloud-Init**, and **Run** in sequence.
 
+### Cross-Architecture Support (ARM64 & AMD64)
+
+This project natively supports building Golden Images for both Apple Silicon (`arm64`) and Intel/AMD (`amd64`). The `Makefile` will automatically detect your host architecture and download the correct Ubuntu image, map the correct QEMU binary, and apply native hardware acceleration (HVF on macOS, KVM on Linux).
+
+If you want to cross-compile an image for a different architecture (e.g., building an `amd64` image while sitting on an Apple Silicon M1 Mac), simply append the `ARCH` variable to your make commands:
+
+```bash
+# Build the AMD64 template on an ARM64 Mac
+make test-run ARCH=amd64
+
+# Push the AMD64 template to the registry
+make push ARCH=amd64
+```
+
+> **Warning:** Running cross-architecture builds utilizes software emulation (`TCG` vs `HVF/KVM`). Because we are installing a graphical desktop environment, software emulation will be *significantly* slower during the 10-minute `cloud-init` installation phase.
+
 ---
 
 ### Step-by-Step Execution

@@ -31,15 +31,4 @@ echo "📝 Step 3: Staging $BUILD_DIR/meta-data..."
 cp "$TEMPLATE_DIR/meta-data" "$BUILD_DIR/meta-data"
 echo "   ✅ Copied meta-data successfully."
 
-echo "💿 Step 4: Provisioning $BUILD_DIR/vars.fd..."
-BREW_QEMU_DIR="/opt/homebrew/share/qemu"
-if [[ -f "$BREW_QEMU_DIR/edk2-arm-vars.fd" ]]; then
-    cp "$BREW_QEMU_DIR/edk2-arm-vars.fd" "$BUILD_DIR/vars.fd"
-    echo "   ✅ Copied edk2-arm-vars.fd to $BUILD_DIR/vars.fd."
-else
-    echo "   ⚠️ Warning: QEMU EFI variables file not found at $BREW_QEMU_DIR/edk2-arm-vars.fd"
-    echo "   🔨 Creating an empty vars.fd (this might trigger a QEMU warning but should work)."
-    touch "$BUILD_DIR/vars.fd"
-fi
-
 echo "🚀 Preparation Complete!"
