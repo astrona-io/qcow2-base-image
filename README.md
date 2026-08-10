@@ -35,18 +35,29 @@ Ensure you have the following installed on your macOS machine:
 
 You can build, customize, boot, and package the template using the automated `Makefile` targets.
 
-### 1. Prepare Configuration
-Scan your host for SSH keys and generate the local VM configuration:
+### The Fast Track
+If you just want to run the entire pipeline end-to-step and boot the VM immediately, use the unified test command:
+```bash
+make test-run
+```
+This will automatically execute **Prepare**, **Download**, **Cloud-Init**, and **Run** in sequence.
+
+---
+
+### Step-by-Step Execution
+
+#### 1. Prepare Configuration
+Generate a dedicated local SSH key and compile the VM configuration:
 ```bash
 make prepare
 ```
 This script:
-* Reads your `~/.ssh/id_ed25519.pub` (or `~/.ssh/id_rsa.pub`) and injects it into the `user-data` cloud-init file.
+* Generates a new, dedicated SSH keypair inside the `build/` directory (`build/id_ed25519`) and injects it into the `user-data` cloud-init file.
 * Configures automatic graphical login into the desktop interface as user `ubuntu`.
 * Sets the default user password to `ubuntu` (required for unlocking screens or performing administrative tasks).
 
-### 2. Download Base Image
-Fetch the official upstream Ubuntu 24.04 cloud image:
+### 2. Download and Convert Base Image
+Fetch the official upstream Ubuntu 24.04 image, convert it, and automatically pre-resize it into a pristine `base-ubuntu.qcow2` template (25GB):
 ```bash
 make download
 ```
@@ -57,14 +68,8 @@ Package the metadata into an ISO 9660 volume labeled `cidata`:
 make cloud-init
 ```
 
-### 4. Resize the Disk
-Before installing a full desktop environment, you must expand the base virtual disk. Expand the image to 25GB:
-```bash
-make resize
-```
-
-### 5. Boot the VM and Install Desktop
-Run the virtual machine. A native Cocoa window will open, and cloud-init will begin installing the minimal desktop automatically on first boot:
+### 4. Boot and Customize the VM Instance
+Run the virtual machine. This command automatically spawns a fresh `instance.qcow2` copied from your pristine `base-ubuntu.qcow2` so your base remains completely untouched:
 ```bash
 make run
 ```
@@ -73,13 +78,13 @@ make run
   * **Username:** `ubuntu`
   * **Password:** `ubuntu`
   * *(Automatic graphical login is configured, so it will log in to the desktop directly).*
-* **Terminal/SSH Access:** You can also connect via SSH from your standard host terminal while the VM is running:
+* **Terminal/SSH Access:** You can also connect via SSH from your standard host terminal while the VM is running by using the custom key generated in the `build/` folder:
   ```bash
-  ssh -p 2222 ubuntu@localhost
+  ssh -i build/id_ed25519 -p 2222 ubuntu@localhost
   ```
 
-### 6. Package as OCI Container
-Once you have shut down the VM and are satisfied with the customized base image (`ubuntu-24.04-desktop.qcow2`), build the container image:
+### 5. Package as OCI Container
+Once you have shut down the VM and are satisfied with the customized VM, build the container image. This target will automatically rename `instance.qcow2` into the final release-ready `ubuntu-24.04-desktop.qcow2` artifact and wrap it:
 ```bash
 make build
 ```

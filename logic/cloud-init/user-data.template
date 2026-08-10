@@ -1,4 +1,18 @@
 #cloud-config
+
+# Route all cloud-init logs directly to the main QEMU screen so the user sees the installation progress
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+# Print a big warning banner to the console before it starts
+bootcmd:
+  - [ sh, -c, 'clear > /dev/tty1' ]
+  - [ sh, -c, 'echo "\n========================================================" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING DESKTOP ENVIRONMENT" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  Please wait 5-10 minutes. The screen will scroll logs." > /dev/tty1' ]
+  - [ sh, -c, 'echo "  The VM will automatically reboot when finished.     " > /dev/tty1' ]
+  - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
+
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -39,3 +53,8 @@ runcmd:
   - systemctl start qemu-guest-agent
   - systemctl enable gdm3
   - echo "VM Desktop Base Template Ready" > /etc/motd
+
+power_state:
+  mode: reboot
+  message: "Cloud-init finished installing the desktop environment. Rebooting to apply changes..."
+  timeout: 5
