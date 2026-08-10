@@ -1,10 +1,18 @@
-# QEMU Ubuntu 24.04 LTS Desktop Template (ARM64)
+# QCOW2 Golden Image Builder
 
-This project contains automation files and a guide to build a customized, minimal Ubuntu 24.04 LTS (Noble Numbat) Desktop virtual machine base image (QCOW2 format) on an Apple Silicon Mac, run it locally with QEMU (using native hardware acceleration and graphical display), and package/ship it as a container image to GitHub Container Registry (GHCR) or any other OCI-compliant registry.
+This repository is an Infrastructure-as-Code pipeline designed to automate the creation, customization, and distribution of generic QEMU virtual machine templates (Golden Images) across multiple architectures (`arm64` and `amd64`).
+
+By default, the pipeline is configured to build a lightweight **Ubuntu 24.04 LTS (Noble Numbat)** Desktop template, but the underlying mechanics (cloud-init compilation, sysprep wiping, and ORAS distribution) are universally applicable to modern Linux distributions.
 
 ## Overview
 
-This repository automates the creation of a **Desktop + Terminal Only** Ubuntu template by utilizing Ubuntu's official minimal desktop meta-package (`ubuntu-desktop-minimal`). This avoids pre-installing bloatware (like office suites, media players, or games), leaving you with a lightweight graphical desktop environment, a file manager, and a terminal.
+Working with VM templates manually is slow and error-prone. This repository automates the pipeline into distinct, reproducible phases:
+
+1. **Configuration:** Auto-generates local, ephemeral SSH keys and compiles `cloud-init` templates.
+2. **Download:** Fetches upstream raw OS images and converts them into pristine QCOW2 base templates.
+3. **Execution:** Automatically clones the base template into an instance disk and boots QEMU (using native macOS HVF or Linux KVM hardware acceleration) to install packages.
+4. **Sysprep:** Wipes the instance disk's history (machine IDs, SSH keys, cloud-init logs) turning it into a pristine "Golden Image".
+5. **Distribution:** Pushes the finalized raw `.qcow2` artifact directly to an OCI-compliant registry using the ORAS CLI.
 
 ## Directory Structure
 

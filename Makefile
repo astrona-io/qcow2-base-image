@@ -15,6 +15,11 @@ endif
 ARCH ?= $(HOST_ARCH)
 OS := $(shell uname -s)
 
+# --- OS Configuration ---
+OS_DISTRO ?= ubuntu
+OS_VERSION ?= 24.04
+OS_RELEASE ?= noble
+
 # Architecture-specific QEMU configurations
 ifeq ($(ARCH),arm64)
 	QEMU_BIN = qemu-system-aarch64
@@ -48,16 +53,16 @@ else
 endif
 
 BUILD_DIR = build
-FINAL_IMAGE_NAME = ubuntu-24.04-desktop-$(ARCH).qcow2
+FINAL_IMAGE_NAME = $(OS_DISTRO)-$(OS_VERSION)-desktop-$(ARCH).qcow2
 INSTANCE_DISK = $(BUILD_DIR)/instance-$(ARCH).qcow2
-BASE_DISK = $(BUILD_DIR)/base-ubuntu-$(ARCH).qcow2
+BASE_DISK = $(BUILD_DIR)/base-$(OS_DISTRO)-$(ARCH).qcow2
 
-IMAGE_URL = https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-$(ARCH).img
-DOWNLOADED_IMG = $(BUILD_DIR)/noble-server-cloudimg-$(ARCH).img
+IMAGE_URL = https://cloud-images.ubuntu.com/$(OS_RELEASE)/current/$(OS_RELEASE)-server-cloudimg-$(ARCH).img
+DOWNLOADED_IMG = $(BUILD_DIR)/$(OS_RELEASE)-server-cloudimg-$(ARCH).img
 
 REGISTRY ?= ghcr.io
 GH_USER ?= $(shell git config user.name 2>/dev/null || echo "your-username")
-OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/ubuntu-24.04-qemu-desktop:$(ARCH)
+OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/$(OS_DISTRO)-$(OS_VERSION)-qemu-desktop:$(ARCH)
 
 VARS_FILE = $(BUILD_DIR)/vars-$(ARCH).fd
 CLOUD_INIT_ISO = $(BUILD_DIR)/cloud-init.iso
