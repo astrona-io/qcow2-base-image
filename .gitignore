@@ -27,5 +27,3 @@ build/*
 .clinerules/
 .github/copilot-instructions.md
 .opencode/
-AGENTS.md
-CLAUDE.md
