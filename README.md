@@ -141,6 +141,55 @@ astroimg pipeline --distro ubuntu --layer docker --flatten
 # -> a standalone ubuntu-24.04-desktop-docker-arm64.qcow2, no base needed to boot it
 ```
 
+### Testing a built image without ever mutating it
+
+A finished artifact (`build/<tag>-<arch>.qcow2`) is meant to be the shipped
+product -- never booted directly, since any write would mutate the file
+you're about to distribute. Both test commands below solve this the same
+way: fork a disposable copy-on-write overlay from the artifact, boot *that*,
+delete it when done. The artifact itself never changes -- boot it a hundred
+times and it stays byte-identical (verify with `md5`/`sha256sum` before and
+after if you don't believe it).
+
+**`astroimg test-boot`** -- test a local artifact interactively:
+
+```bash
+astroimg test-boot --distro ubuntu --layer docker
+# forks build/ubuntu-24.04-desktop-docker-arm64.qcow2 into a throwaway
+# overlay (a 3-file chain: fork -> layer -> base), boots it, prints an SSH
+# command, and deletes the fork on Ctrl-C
+```
+
+No packages get installed and no `runcmd` runs -- the artifact is already
+fully provisioned and sysprepped. The fork only gets a fresh SSH key
+injected (sysprep wiped the old one) so you can log in and poke around.
+Add `--headless --verbose` to boot it without a GUI window and stream the
+console instead.
+
+**`astroimg test-oci`** -- confirm what's actually sitting in your registry
+works, not just what's on disk locally:
+
+```bash
+astroimg test-oci --distro ubuntu --layer docker
+# 1. pulls the layer artifact from GHCR
+# 2. pulls its base artifact too (a non-flattened layer needs both --
+#    that's what any real downstream consumer has to do)
+# 3. qemu-img rebase -u's the pulled layer onto the pulled base's local
+#    path (the backing-file path baked in at push time pointed at your
+#    build machine, not this one)
+# 4. verifies it with `qemu-img info`
+# 5. forks a throwaway overlay from it, boots it headless, confirms SSH
+#    login actually works, then deletes the fork
+```
+
+If you built the layer with `--flatten`, `test-oci` detects it has no
+backing file and skips the base-pull/rebase step -- it's self-contained, one
+pull is enough. For a base image (`--layer` omitted), it's just pull,
+verify, boot-test -- one artifact, no rebase needed either.
+
+Both commands need `astroimg build` (or `push`, for `test-oci`) to have
+already produced the artifact you're pointing them at.
+
 ---
 
 ## Prerequisites
@@ -217,9 +266,10 @@ astroimg iso           # package the NoCloud seed ISO
 astroimg run           # boot the VM and leave it running
 # ... in another terminal, once cloud-init finishes ...
 astroimg sysprep       # wipe cloud-init/SSH state and halt the guest
-astroimg build         # rename the sysprepped disk to its final release name
+astroimg build         # compress the sysprepped disk into its final release name
+astroimg test-boot     # fork the finished artifact and boot it, without mutating it
 astroimg push          # push the artifact to the registry with ORAS
-astroimg test-oci      # pull it back down and verify it with qemu-img
+astroimg test-oci      # pull it back down, rebase if needed, and boot-test it
 ```
 
 In `--headless` mode there's no GUI window to watch, so `run`/`pipeline`
