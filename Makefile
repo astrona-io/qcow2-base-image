@@ -70,7 +70,7 @@ cloud-init: setup
 	@mkdir -p $(BUILD_DIR)/cidata
 	@cp $(BUILD_DIR)/user-data $(BUILD_DIR)/meta-data $(BUILD_DIR)/cidata/
 	@rm -f $(CLOUD_INIT_ISO)
-	hdiutil makehybrid -o $(CLOUD_INIT_ISO) -hfs -joliet -iso -default-volume-name cidata $(BUILD_DIR)/cidata/
+	hdiutil makehybrid -iso -joliet -default-volume-name cidata -o $(CLOUD_INIT_ISO) $(BUILD_DIR)/cidata/
 	@rm -rf $(BUILD_DIR)/cidata
 	@echo "✅ $(CLOUD_INIT_ISO) generated successfully."
 
@@ -112,6 +112,7 @@ run: setup
 		-drive if=pflash,format=raw,file=$(VARS_FILE) \
 		-drive if=virtio,file=$(INSTANCE_DISK),format=qcow2 \
 		-drive if=virtio,file=$(CLOUD_INIT_ISO),format=raw \
+		-smbios type=1,serial=ds=nocloud \
 		-device virtio-gpu-pci \
 		-display cocoa,show-cursor=on \
 		-device virtio-mouse-pci \

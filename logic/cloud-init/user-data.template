@@ -18,7 +18,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     lock_passwd: false
-    passwd: "\$6\$rounds=4096\$saltsaltsaltsalt\$8Dba93oEaZ16P0z3P8b4S0Ua697l0K3n.WqKqO6/Zq8I.8R/yL0bI1s1K1G1r3m3X9u3E4wEa6P8.T/4q9X6s." # password is 'ubuntu'
+    passwd: "$6$rounds=4096$saltsaltsaltsalt$8Dba93oEaZ16P0z3P8b4S0Ua697l0K3n.WqKqO6/Zq8I.8R/yL0bI1s1K1G1r3m3X9u3E4wEa6P8.T/4q9X6s." # password is 'ubuntu'
     ssh_authorized_keys:
       - ${SSH_KEY}
 
@@ -26,6 +26,8 @@ chpasswd:
   list: |
     ubuntu:ubuntu
   expire: false
+
+ssh_pwauth: true
 
 package_update: true
 package_upgrade: true
