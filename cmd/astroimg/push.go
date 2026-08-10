@@ -32,7 +32,7 @@ var pushCmd = &cobra.Command{
 		image := ociImage(r)
 		fmt.Printf("pushing %s to %s...\n", finalPath, image)
 
-		if err := orasclient.Push(cmd.Context(), image, finalPath, "application/vnd.qemu.disk.qcow2"); err != nil {
+		if err := orasclient.Push(cmd.Context(), image, finalPath, "application/vnd.qemu.disk.qcow2", ociSourceAnnotations(r.FinalImageName)); err != nil {
 			return err
 		}
 

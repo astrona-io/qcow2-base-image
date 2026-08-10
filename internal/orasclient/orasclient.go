@@ -22,9 +22,21 @@ func CheckInstalled() error {
 }
 
 // Push uploads filePath to image as a raw OCI artifact with the given media
-// type, streaming oras's own progress output to stdout/stderr.
-func Push(ctx context.Context, image, filePath, mediaType string) error {
-	cmd := exec.CommandContext(ctx, "oras", "push", image, filePath+":"+mediaType) //nolint:gosec // argv-only, image/filePath/mediaType are internally constructed, not raw user input
+// type and manifest annotations, streaming oras's own progress output to
+// stdout/stderr. Setting the standard org.opencontainers.image.source
+// annotation to this repo's GitHub URL is what makes GHCR auto-link the
+// resulting package to the repo -- and, for a package that doesn't already
+// exist, makes it inherit that repo's visibility (public repo -> public
+// package) instead of defaulting to private.
+func Push(ctx context.Context, image, filePath, mediaType string, annotations map[string]string) error {
+	args := []string{"push", image}
+	for k, v := range annotations {
+		args = append(args, "--annotation", k+"="+v)
+	}
+
+	args = append(args, filePath+":"+mediaType)
+
+	cmd := exec.CommandContext(ctx, "oras", args...) //nolint:gosec // argv-only, all values are internally constructed, not raw user input
 	cmd.Stdout = os.Stdout
 
 	cmd.Stderr = os.Stderr

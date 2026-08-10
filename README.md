@@ -201,8 +201,10 @@ already produced the artifact you're pointing them at.
 - **QEMU**: `brew install qemu` (macOS) / `apt install qemu-system-x86 ovmf`
   or `qemu-system-arm qemu-efi-aarch64` (Linux, matching your target arch).
 - **ORAS CLI** (only needed for `push`/`test-oci`): `brew install oras`.
-- **Git**: used to default the registry namespace (`git config user.name`)
-  for `push`/`test-oci` if `--gh-user` isn't passed.
+- **Git**: used to default the registry namespace for `push`/`test-oci` if
+  `--gh-user` isn't passed -- this repo's GitHub org/user from `git remote
+  get-url origin` (e.g. `astrona-io`), falling back to the `gh` CLI's
+  logged-in username if there's no GitHub remote.
 
 No `hdiutil`/`genisoimage`/`xorriso` needed -- the ISO is built in pure Go.
 
@@ -291,6 +293,60 @@ ssh -i build/id_ed25519 -p 2222 -o UserKnownHostsFile=build/known_hosts ubuntu@l
 ```
 
 Credentials inside the guest: username `ubuntu`, password `ubuntu`.
+
+### Publishing to GHCR manually (do this once before automating it in CI)
+
+Walk through this by hand first so you know it actually works end to end
+before `build-image.yml` does it unattended:
+
+**1. Build the base:**
+```bash
+astroimg pipeline --distro ubuntu --headless --verbose
+# -> build/ubuntu-24.04-desktop-arm64.qcow2
+```
+
+**2. Build the layer on top of it:**
+```bash
+astroimg pipeline --distro ubuntu --layer docker --headless --verbose
+# -> build/ubuntu-24.04-desktop-docker-arm64.qcow2
+```
+
+**3. Sanity-check locally before touching the registry:**
+```bash
+astroimg test-boot --distro ubuntu --layer docker
+# forks a disposable 3rd file, boots it, gives you SSH -- Ctrl-C when
+# satisfied, the fork deletes itself, the artifact is untouched
+```
+
+**4. Log in to GHCR** (needs a GitHub token with `write:packages` scope):
+```bash
+echo $GITHUB_TOKEN | oras login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+**5. Push both artifacts.** Base and layer are separate OCI artifacts --
+push both, since the layer is a backing-file overlay, not standalone:
+```bash
+astroimg push --distro ubuntu
+astroimg push --distro ubuntu --layer docker
+```
+Default ref is `ghcr.io/<git-config-user.name>/<image-tag>:<arch>` --
+override the namespace with `--gh-user` if that's wrong, `--registry` if
+you're not using GHCR.
+
+**6. Verify what's actually sitting in the registry**, not just your local
+files -- this pulls both artifacts fresh, rebases the layer onto the
+just-pulled base, and boot-tests the result:
+```bash
+astroimg test-oci --distro ubuntu --layer docker
+```
+
+**7. Package visibility:** a freshly-pushed GHCR package defaults to
+**private**. `test-oci` still works (it pulls using your own logged-in
+credentials), but anyone else pulling it needs the package made public (or
+granted access) in the package's settings on github.com.
+
+Once steps 1-6 work manually, `build-image.yml` (below) automates exactly
+this same sequence unattended.
 
 ### Running in CI
 

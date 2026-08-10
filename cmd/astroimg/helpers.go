@@ -65,10 +65,26 @@ func runExternal(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
-// gitConfigUserNameOrDefault mirrors the old Makefile's
-// `git config user.name 2>/dev/null || echo "your-username"` default for
-// the OCI image namespace.
+// gitConfigUserNameOrDefault resolves a default OCI registry namespace when
+// --gh-user isn't passed, in order of preference:
+//  1. This repo's own GitHub org/user, parsed from `git remote get-url
+//     origin` -- the artifact naturally belongs with whoever owns the repo
+//     that builds it, not whoever happens to be running the build.
+//  2. The `gh` CLI's authenticated login, for repos without a GitHub
+//     remote (or when running outside this repo's checkout).
+//  3. A sanitized `git config user.name` as a last resort: it's a
+//     free-text display name -- e.g. "Paris Nakita Kejser" -- which isn't
+//     a valid OCI repository path component (spaces aren't allowed) and
+//     breaks `oras push` with an "invalid reference" error if used as-is.
 func gitConfigUserNameOrDefault() string {
+	if owner := gitRemoteOwner(); owner != "" {
+		return owner
+	}
+
+	if login := ghCLIUsername(); login != "" {
+		return login
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -79,5 +95,97 @@ func gitConfigUserNameOrDefault() string {
 		return "your-username"
 	}
 
-	return name
+	return sanitizeOCIPathComponent(name)
+}
+
+// gitRemoteOwner extracts the "owner" segment (org or user) from origin's
+// github.com URL. Returns "" if origin isn't a github.com remote or
+// doesn't exist.
+func gitRemoteOwner() string {
+	owner, _ := gitRemoteOwnerRepo()
+	return owner
+}
+
+// gitRemoteHTTPSURL returns origin's github.com URL normalized to
+// "https://github.com/owner/repo" form, suitable for the
+// org.opencontainers.image.source annotation. Returns "" if origin isn't a
+// github.com remote or doesn't exist.
+func gitRemoteHTTPSURL() string {
+	owner, repo := gitRemoteOwnerRepo()
+	if owner == "" || repo == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+}
+
+// gitRemoteOwnerRepo parses origin's github.com URL, in either SSH
+// (git@github.com:owner/repo.git) or HTTPS
+// (https://github.com/owner/repo.git) form, into its owner and repo
+// segments. Returns ("", "") if origin isn't a github.com remote or
+// doesn't exist.
+func gitRemoteOwnerRepo() (owner, repo string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", ""
+	}
+
+	url := strings.TrimSuffix(strings.TrimSpace(string(out)), ".git")
+
+	var path string
+
+	switch {
+	case strings.Contains(url, "github.com:"):
+		path = url[strings.Index(url, "github.com:")+len("github.com:"):]
+	case strings.Contains(url, "github.com/"):
+		path = url[strings.Index(url, "github.com/")+len("github.com/"):]
+	default:
+		return "", ""
+	}
+
+	owner, repo, _ = strings.Cut(path, "/")
+
+	return owner, repo
+}
+
+// ghCLIUsername returns the authenticated GitHub CLI user's login, or ""
+// if `gh` isn't installed or isn't authenticated.
+func ghCLIUsername() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login").Output()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+// sanitizeOCIPathComponent lowercases s and collapses every run of
+// characters outside [a-z0-9] into a single "-", so the result is always a
+// valid OCI repository path component (distribution spec:
+// [a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*).
+func sanitizeOCIPathComponent(s string) string {
+	var b strings.Builder
+
+	prevDash := true // avoid a leading '-'
+
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+
+			prevDash = false
+		case !prevDash:
+			b.WriteByte('-')
+
+			prevDash = true
+		}
+	}
+
+	return strings.TrimSuffix(b.String(), "-")
 }

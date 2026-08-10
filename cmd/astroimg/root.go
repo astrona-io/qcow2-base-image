@@ -43,7 +43,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagLayerBaseImage, "layer-base-image", "", "override the base image a layer boots from (default: this distro's finished non-layer image)")
 	rootCmd.PersistentFlags().IntVar(&flagSSHPort, "ssh-port", 2222, "host port forwarded to the guest's SSH port")
 	rootCmd.PersistentFlags().StringVar(&flagRegistry, "registry", "ghcr.io", "OCI registry for push/test-oci")
-	rootCmd.PersistentFlags().StringVar(&flagGHUser, "gh-user", "", "registry namespace/user for push/test-oci (default: git config user.name)")
+	rootCmd.PersistentFlags().StringVar(&flagGHUser, "gh-user", "", "registry namespace/org for push/test-oci (default: this repo's GitHub org from 'git remote origin', then 'gh' CLI login)")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
 	rootCmd.PersistentFlags().Bool("headless", false, "run QEMU without a GUI window (default: auto-detect via $CI / host OS)")
@@ -156,4 +156,20 @@ func ociImage(r config.Resolved) string {
 	}
 
 	return config.OCIImage(flagRegistry, ghUser, r.ImageTag, r.Arch)
+}
+
+// ociSourceAnnotations builds the OCI manifest annotations set on push.
+// org.opencontainers.image.source is what makes GHCR auto-link the
+// resulting package to this repo -- and, for a package that doesn't
+// already exist, makes it inherit the repo's visibility (public repo ->
+// public package) instead of defaulting to private. No-op (empty map) if
+// origin isn't a github.com remote.
+func ociSourceAnnotations(title string) map[string]string {
+	annotations := map[string]string{"org.opencontainers.image.title": title}
+
+	if src := gitRemoteHTTPSURL(); src != "" {
+		annotations["org.opencontainers.image.source"] = src
+	}
+
+	return annotations
 }
