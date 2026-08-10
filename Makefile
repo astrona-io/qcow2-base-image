@@ -29,9 +29,9 @@ help:
 	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO (using hdiutil)"
 	@echo "  make run         - Spawn a fresh instance.qcow2 from the base, launch VM, and install Desktop"
 	@echo "  make sysprep     - Connect to the running VM, clean cloud-init data/SSH keys, and shut it down"
-	@echo "  make build       - Rename instance.qcow2 to $(FINAL_IMAGE_NAME) and build the OCI container"
-	@echo "  make test-oci    - Extract the QCOW2 from the OCI container and verify its integrity"
-	@echo "  make push        - Push the OCI container image to the public registry ($(OCI_IMAGE))"
+	@echo "  make build       - Finalize the instance.qcow2 artifact for OCI pushing"
+	@echo "  make test-oci    - Pull the QCOW2 from the OCI registry using ORAS and verify it"
+	@echo "  make push        - Push the raw QCOW2 artifact to the OCI registry using ORAS ($(OCI_IMAGE))"
 	@echo "  make clean       - Remove the entire build/ directory"
 
 test-run:
@@ -137,33 +137,31 @@ build: setup
 	fi
 	@echo "🏗️  Preparing final artifact for OCI packaging..."
 	@mv $(INSTANCE_DISK) $(BUILD_DIR)/$(FINAL_IMAGE_NAME)
-	@echo "🐳 Building OCI image containing $(FINAL_IMAGE_NAME)..."
-	docker build -f logic/oci/Dockerfile -t $(OCI_IMAGE) .
-	@echo "✅ OCI image built: $(OCI_IMAGE)"
+	@echo "✅ Final artifact ready: $(BUILD_DIR)/$(FINAL_IMAGE_NAME)"
 
 test-oci: setup
-	@echo "🧪 === Starting OCI Image Verification === 🧪"
-	@echo "1️⃣  Checking if the local OCI image '$(OCI_IMAGE)' exists..."
-	@docker image inspect $(OCI_IMAGE) > /dev/null 2>&1 || { \
-		echo "❌ Error: OCI image '$(OCI_IMAGE)' not found. Run 'make build' first."; \
-		exit 1; \
-	}
-	@echo "   ✅ OCI image exists."
-	@echo "2️⃣  Extracting QCOW2 virtual disk from container using auto-extraction volume mount..."
+	@if ! command -v oras >/dev/null 2>&1; then echo "❌ Error: 'oras' CLI is required. Run 'brew install oras'."; exit 1; fi
+	@echo "🧪 === Starting OCI Artifact Verification === 🧪"
+	@echo "1️⃣  Pulling OCI artifact '$(OCI_IMAGE)' using ORAS..."
 	@rm -rf $(TEST_EXTRACT_DIR)
 	@mkdir -p $(TEST_EXTRACT_DIR)
-	@docker run --rm -v "$$(pwd)/$(TEST_EXTRACT_DIR)":/out $(OCI_IMAGE) > /dev/null
-	@echo "   ✅ Extracted successfully to $(TEST_IMAGE_NAME)."
-	@echo "3️⃣  Verifying integrity of extracted QCOW2 image..."
+	@oras pull $(OCI_IMAGE) -o $(TEST_EXTRACT_DIR) || { \
+		echo "❌ Error: Failed to pull OCI image '$(OCI_IMAGE)'. Did you run 'make push' first?"; \
+		exit 1; \
+	}
+	@echo "   ✅ Pulled successfully to $(TEST_EXTRACT_DIR)."
+	@echo "2️⃣  Verifying integrity of extracted QCOW2 image..."
 	@qemu-img info $(TEST_IMAGE_NAME) || { \
 		echo "❌ Error: The extracted virtual disk is corrupted or not in QCOW2 format."; \
 		exit 1; \
 	}
-	@echo "🎉 === Verification Successful! OCI image is fully functional and ready to push. === 🎉"
+	@echo "🎉 === Verification Successful! OCI artifact is fully functional. === 🎉"
 
 push:
-	@echo "🚀 Pushing $(OCI_IMAGE) to registry..."
-	docker push $(OCI_IMAGE)
+	@if ! command -v oras >/dev/null 2>&1; then echo "❌ Error: 'oras' CLI is required. Run 'brew install oras'."; exit 1; fi
+	@if [ ! -f $(BUILD_DIR)/$(FINAL_IMAGE_NAME) ]; then echo "❌ Error: Final artifact not found. Run 'make build' first."; exit 1; fi
+	@echo "🚀 Pushing $(BUILD_DIR)/$(FINAL_IMAGE_NAME) to registry as a raw OCI artifact..."
+	oras push $(OCI_IMAGE) $(BUILD_DIR)/$(FINAL_IMAGE_NAME):application/vnd.qemu.disk.qcow2
 	@echo "✅ Successfully pushed $(OCI_IMAGE) to OCI registry!"
 
 clean:

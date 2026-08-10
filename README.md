@@ -26,7 +26,10 @@ Ensure you have the following installed on your macOS machine:
   ```bash
   brew install qemu
   ```
-- **Docker/Podman**: Container runtime to package and push the template to GHCR.
+- **ORAS CLI**: The OCI Registry As Storage tool to natively push/pull raw artifacts to GHCR.
+  ```bash
+  brew install oras
+  ```
 - **Git**: Configured to resolve your username for the registry image name.
 
 ---
@@ -90,64 +93,94 @@ make sysprep
 ```
 This command automatically connects via SSH, wipes the `cloud-init` logs, deletes your temporary SSH keys, resets the machine ID, and securely powers down the VM.
 
-### 6. Package as OCI Container
-Once the VM has shut down from the sysprep command, build the container image. This target will automatically rename `instance.qcow2` into the final release-ready `ubuntu-24.04-desktop.qcow2` artifact and wrap it:
+### 6. Prepare Artifact for Distribution
+Once the VM has shut down from the sysprep command, finalize the artifact. This target will automatically rename `instance.qcow2` into the final release-ready `ubuntu-24.04-desktop.qcow2`:
 ```bash
 make build
 ```
 
-### 7. Test and Verify the OCI Container
-Before pushing your image to the public registry, you should verify its validity and ensure it was packaged without any corruption:
+### 7. Push as an OCI Artifact
+Instead of wrapping the disk in a Docker container layer, we use **ORAS** to push the raw `.qcow2` file directly to the GitHub Container Registry as an OCI Artifact.
+
+```bash
+# Log in to your registry first (e.g., GHCR) using ORAS
+echo $CR_PAT | oras login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+# Push the raw QCOW2 file directly to GHCR
+make push GH_USER=YOUR_GITHUB_USERNAME
+```
+
+### 8. Test and Verify the Push
+After pushing, you can verify that the artifact can be successfully pulled down and isn't corrupted:
 ```bash
 make test-oci
 ```
-This automated test will:
-1. Confirm the local OCI container image exists.
-2. Extract the QCOW2 virtual disk from the OCI container into a separate `test-extract` directory using a safe container copying mechanism (no mounting required).
-3. Validate the integrity and format of the extracted virtual disk using `qemu-img info`.
-
-If the script outputs `Verification Successful!`, the container is fully functional and ready to ship.
-
-### 8. Push to OCI Registry
-Push your new template directly to your public registry (defaults to GHCR):
-```bash
-# Log in to your registry first (e.g., GHCR)
-echo $CR_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-
-# Push the container
-make push GH_USER=YOUR_GITHUB_USERNAME
-```
+This will use `oras pull` to download the file into a temporary directory and verify its structure with `qemu-img`.
 
 ---
 
 ## Reference & Deep Dive
 
-### How the OCI Shipping Method Works
+### How to Retrieve the Golden Image (Downstream Consumption)
 
-Instead of needing complex third-party CLI tools like `oras` to upload non-container artifacts, this approach utilizes a **scratch Dockerfile** (also known as a container-disk pattern popular in tools like KubeVirt).
+Because we pushed the template as a raw OCI Artifact, consumers don't need Docker to run it. They just need the `oras` CLI to pull the raw file straight to their hard drive.
 
-The `Dockerfile` is simple:
-```dockerfile
-FROM scratch
-COPY ubuntu-24.04-desktop.qcow2 /disk/ubuntu-24.04-desktop.qcow2
-```
+Here is an example of how a downstream test lab would consume your Golden Image:
 
-This packages the QCOW2 image inside a standard, ultra-lightweight OCI layer. It is fully supported by standard container registries (GHCR, Docker Hub, ECR, etc.) and can be managed using standard container security scan tools, version tags, and CI pipelines (such as GitHub Actions).
-
-### How to Retrieve/Extract the QCOW2 Template
-
-We've designed the OCI image to be completely self-documenting and self-extracting for your consumers. They do not need to memorize complex CLI tools or lookup `qemu` flags online.
-
-To use the template on another machine, the consumer simply runs:
-
+**1. Pull the raw `.qcow2` disk:**
 ```bash
-docker run --rm -v "$(pwd)":/out ghcr.io/YOUR_GITHUB_USERNAME/ubuntu-24.04-qemu-desktop:latest
+oras pull ghcr.io/YOUR_GITHUB_USERNAME/ubuntu-24.04-qemu-desktop:latest
 ```
 
-This single command will:
-1. Download the template from your registry.
-2. Detect the mounted `/out` volume and **automatically copy the `ubuntu-24.04-desktop.qcow2` virtual disk** to the consumer's current working directory.
-3. Print a beautiful terminal guide with the exact, copy-pasteable KVM (Linux) and HVF (macOS) `qemu-system-aarch64` commands required to boot the template natively!
+**2. Create a new Test Lab `user-data`:**
+Create a file named `user-data` that creates a new admin user called `labadmin`:
+```yaml
+#cloud-config
+users:
+  - name: labadmin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: false
+chpasswd:
+  list: |
+    labadmin:testpassword
+  expire: false
+ssh_pwauth: true
+```
+
+**3. Create a new `meta-data`:**
+Create a file named `meta-data`:
+```yaml
+instance-id: test-lab-vm
+local-hostname: test-lab
+```
+
+**4. Generate the Cloud-Init ISO & EFI Variables:**
+```bash
+# Package the metadata into a local ISO
+mkdir -p cidata
+cp user-data meta-data cidata/
+hdiutil makehybrid -iso -joliet -default-volume-name cidata -o lab-cloud-init.iso cidata/
+
+# Copy the QEMU EFI variables template so the VM can boot
+cp /opt/homebrew/share/qemu/edk2-arm-vars.fd vars.fd
+```
+
+**5. Boot the VM:**
+Now boot the extracted Golden Image with the new lab configurations:
+```bash
+qemu-system-aarch64 \
+    -M virt,highmem=on -accel hvf -cpu host -smp 4 -m 4096 \
+    -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+    -drive if=pflash,format=raw,file=vars.fd \
+    -drive if=virtio,file=ubuntu-24.04-desktop.qcow2,format=qcow2 \
+    -drive if=virtio,file=lab-cloud-init.iso,format=raw \
+    -smbios type=1,serial=ds=nocloud \
+    -device virtio-gpu-pci -display cocoa,show-cursor=on \
+    -device virtio-mouse-pci -device virtio-keyboard-pci \
+    -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22
+```
+You can now log into the graphical desktop instantly as `labadmin` with the password `testpassword`!
 
 ### Hardware & Graphics Acceleration (macOS HVF)
 
