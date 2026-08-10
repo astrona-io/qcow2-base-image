@@ -1,0 +1,30 @@
+#cloud-config
+
+# Layer: docker. Applied on top of a finished base image (fresh instance-id,
+# so cloud-init re-runs even though the disk was already sysprepped).
+
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+# Base image already created the primary user; re-declaring ssh_authorized_keys
+# re-injects a fresh key since sysprep wiped the old one.
+users:
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${SSH_KEY}
+
+package_update: true
+
+packages:
+  - docker.io
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+  - echo "Docker layer applied" >> /etc/motd
+
+power_state:
+  mode: reboot
+  message: "Layer cloud-init finished. Rebooting to apply changes..."
+  timeout: 5

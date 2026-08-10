@@ -16,13 +16,34 @@ Working with VM templates manually is slow and error-prone. This repository auto
 
 ## Directory Structure
 
-This project uses a clean, modular architecture separating templates, build logic, and output artifacts:
+This project uses a clean, modular architecture separating distro configs, layers, build logic, and output artifacts:
 
-* `logic/cloud-init/`: Contains the base YAML configurations (`user-data.template`, `meta-data`).
+* `distros/<name>/`: Per-distro base config — `user-data.template`, `meta-data`, and `distro.mk` (version, release codename, image URL, image variant). Select with `DISTRO=<name>` (default `ubuntu`).
+* `layers/<name>/`: Optional add-on config applied on top of an already-built base image instead of a fresh download — same `user-data.template`/`meta-data` shape, but the template only needs the delta (extra packages, `runcmd`, re-injected SSH key). Select with `LAYER=<name>`.
 * `logic/scripts/`: Bash scripts for environment injection and automation (e.g., `prepare.sh`).
 * `logic/oci/`: Contains the `Dockerfile` and self-extracting `entrypoint.sh` for container packaging.
 * `build/`: A git-ignored directory generated dynamically. It holds all transient artifacts, downloaded disks, ISOs, and compiled configuration files.
 * `Makefile`: The single entry point to orchestrate the pipeline.
+
+### Distros and Layers
+
+Build a base image once, then layer additional customization on top of it into a *new* qcow2 without re-running the OS install:
+
+```bash
+# 1. Build the ubuntu base (downloads the cloud image, boots, sysprep, package)
+make test-run DISTRO=ubuntu
+make sysprep      # in another terminal once cloud-init finishes
+make build         # -> build/ubuntu-24.04-desktop-arm64.qcow2
+
+# 2. Layer "docker" on top of that base into a separate image
+make test-run DISTRO=ubuntu LAYER=docker
+make sysprep
+make build         # -> build/ubuntu-24.04-desktop-docker-arm64.qcow2
+```
+
+A layer boots the base's finished image (`LAYER_BASE_IMAGE`, defaults to the non-layer `FINAL_IMAGE_NAME`) with a fresh cloud-init instance-id, so cloud-init re-runs even though the disk was already sysprepped. Chain layers by pointing `LAYER_BASE_IMAGE=build/<previous-layer>.qcow2` at another layer's output.
+
+To add a new distro, create `distros/<name>/{user-data.template,meta-data,distro.mk}` following `distros/ubuntu/` as a template. `make list-distros` / `make list-layers` show what's available.
 
 ---
 

@@ -1,4 +1,4 @@
-# Makefile for building, running, and shipping QEMU Ubuntu Desktop Templates
+# Makefile for building, running, and shipping QEMU VM Templates
 
 # --- Architecture Detection & Configuration ---
 HOST_ARCH := $(shell uname -m)
@@ -15,10 +15,19 @@ endif
 ARCH ?= $(HOST_ARCH)
 OS := $(shell uname -s)
 
-# --- OS Configuration ---
-OS_DISTRO ?= ubuntu
-OS_VERSION ?= 24.04
-OS_RELEASE ?= noble
+# --- Distro / Layer Configuration ---
+# DISTRO selects distros/<DISTRO>/{user-data.template,meta-data,distro.mk}.
+# LAYER (optional) selects layers/<LAYER>/{user-data.template,meta-data} and
+# is applied on top of an already-built base image (LAYER_BASE_IMAGE) instead
+# of a freshly downloaded upstream image. Chain layers by pointing
+# LAYER_BASE_IMAGE at a previous layer's output.
+DISTRO ?= ubuntu
+LAYER ?=
+
+DISTRO_DIR = distros/$(DISTRO)
+LAYER_DIR = layers/$(LAYER)
+
+include $(DISTRO_DIR)/distro.mk
 
 # Architecture-specific QEMU configurations
 ifeq ($(ARCH),arm64)
@@ -53,30 +62,51 @@ else
 endif
 
 BUILD_DIR = build
-FINAL_IMAGE_NAME = $(OS_DISTRO)-$(OS_VERSION)-desktop-$(ARCH).qcow2
-INSTANCE_DISK = $(BUILD_DIR)/instance-$(ARCH).qcow2
-BASE_DISK = $(BUILD_DIR)/base-$(OS_DISTRO)-$(ARCH).qcow2
 
-IMAGE_URL = https://cloud-images.ubuntu.com/$(OS_RELEASE)/current/$(OS_RELEASE)-server-cloudimg-$(ARCH).img
+# --- Image tag & template selection ---
+ifeq ($(LAYER),)
+	TEMPLATE_DIR = $(DISTRO_DIR)
+	IMAGE_TAG = $(DISTRO)-$(OS_VERSION)-$(IMAGE_VARIANT)
+	INSTANCE_ID_PREFIX = $(DISTRO)-$(OS_VERSION)-base
+	SOURCE_DISK = $(BASE_DISK)
+else
+	TEMPLATE_DIR = $(LAYER_DIR)
+	IMAGE_TAG = $(DISTRO)-$(OS_VERSION)-$(IMAGE_VARIANT)-$(LAYER)
+	INSTANCE_ID_PREFIX = $(DISTRO)-$(OS_VERSION)-$(LAYER)
+	SOURCE_DISK = $(LAYER_BASE_IMAGE)
+endif
+
+FINAL_IMAGE_NAME = $(IMAGE_TAG)-$(ARCH).qcow2
+INSTANCE_DISK = $(BUILD_DIR)/instance-$(IMAGE_TAG)-$(ARCH).qcow2
+
+# Pristine downloaded base disk (distro-level only, no variant/layer in the name).
+BASE_DISK = $(BUILD_DIR)/base-$(DISTRO)-$(ARCH).qcow2
+
+# Source disk a layer is built from. Defaults to this distro's finished base
+# image; override to chain onto another layer's output instead.
+LAYER_BASE_IMAGE ?= $(BUILD_DIR)/$(DISTRO)-$(OS_VERSION)-$(IMAGE_VARIANT)-$(ARCH).qcow2
+
 DOWNLOADED_IMG = $(BUILD_DIR)/$(OS_RELEASE)-server-cloudimg-$(ARCH).img
 
 REGISTRY ?= ghcr.io
 GH_USER ?= $(shell git config user.name 2>/dev/null || echo "your-username")
-OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/$(OS_DISTRO)-$(OS_VERSION)-qemu-desktop:$(ARCH)
+OCI_IMAGE ?= $(REGISTRY)/$(GH_USER)/$(IMAGE_TAG):$(ARCH)
 
 VARS_FILE = $(BUILD_DIR)/vars-$(ARCH).fd
-CLOUD_INIT_ISO = $(BUILD_DIR)/cloud-init.iso
+CLOUD_INIT_ISO = $(BUILD_DIR)/$(IMAGE_TAG)-cloud-init.iso
+USER_DATA = $(BUILD_DIR)/$(IMAGE_TAG)-user-data
+META_DATA = $(BUILD_DIR)/$(IMAGE_TAG)-meta-data
 
 TEST_EXTRACT_DIR = $(BUILD_DIR)/test-extract
 TEST_IMAGE_NAME = $(TEST_EXTRACT_DIR)/$(FINAL_IMAGE_NAME)
 
-.PHONY: help setup prepare download cloud-init run pin-hostkey sysprep build test-oci push clean test-run
+.PHONY: help setup prepare download cloud-init run pin-hostkey sysprep build test-oci push clean test-run list-distros list-layers
 
 help:
-	@echo "Available commands (Host: $(OS) $(HOST_ARCH)):"
+	@echo "Available commands (Host: $(OS) $(HOST_ARCH) | DISTRO=$(DISTRO) LAYER=$(LAYER)):"
 	@echo "  make test-run    - QUICKSTART: Runs the entire pipeline sequentially for $(ARCH)"
 	@echo "  make prepare     - Run logic/scripts/prepare.sh to generate cloud-init configs"
-	@echo "  make download    - Download the $(ARCH) Ubuntu image and create pristine base"
+	@echo "  make download    - Download the $(ARCH) OS image and create pristine base (base builds only)"
 	@echo "  make cloud-init  - Package cloud-init metadata into a bootable ISO"
 	@echo "  make run         - Boot VM. Override arch with 'make run ARCH=amd64' (Emulation)"
 	@echo "  make pin-hostkey - Manually pin VM's SSH host key if 'make run' gave up waiting"
@@ -85,19 +115,35 @@ help:
 	@echo "  make test-oci    - Pull the $(ARCH) QCOW2 from OCI using ORAS and verify it"
 	@echo "  make push        - Push the $(ARCH) QCOW2 artifact to OCI using ORAS"
 	@echo "  make clean       - Remove the entire build/ directory"
+	@echo "  make list-distros - List available DISTRO values (distros/*)"
+	@echo "  make list-layers  - List available LAYER values (layers/*)"
+	@echo ""
+	@echo "Distros: pick one with DISTRO=<name>, e.g. 'make test-run DISTRO=ubuntu'"
+	@echo "Layers:  build a base first, then layer on top with LAYER=<name>, e.g.:"
+	@echo "           make test-run DISTRO=ubuntu               # build the base"
+	@echo "           make build                                # -> build/$(DISTRO)-$(OS_VERSION)-$(IMAGE_VARIANT)-$(ARCH).qcow2"
+	@echo "           make test-run DISTRO=ubuntu LAYER=docker   # layer docker on top of it"
 
 test-run:
-	@echo "🔥 === Starting Full Pipeline Test Run for $(ARCH) === 🔥"
-	$(MAKE) prepare ARCH=$(ARCH)
-	$(MAKE) download ARCH=$(ARCH)
-	$(MAKE) cloud-init ARCH=$(ARCH)
-	$(MAKE) run ARCH=$(ARCH)
+	@echo "🔥 === Starting Full Pipeline Test Run for $(ARCH) (DISTRO=$(DISTRO)$(if $(LAYER), LAYER=$(LAYER),)) === 🔥"
+	$(MAKE) prepare ARCH=$(ARCH) DISTRO=$(DISTRO) LAYER=$(LAYER)
+ifeq ($(LAYER),)
+	$(MAKE) download ARCH=$(ARCH) DISTRO=$(DISTRO)
+endif
+	$(MAKE) cloud-init ARCH=$(ARCH) DISTRO=$(DISTRO) LAYER=$(LAYER)
+	$(MAKE) run ARCH=$(ARCH) DISTRO=$(DISTRO) LAYER=$(LAYER)
 
 setup:
 	@mkdir -p $(BUILD_DIR)
 
+list-distros:
+	@ls -1 distros
+
+list-layers:
+	@ls -1 layers
+
 prepare: setup
-	./logic/scripts/prepare.sh
+	@BUILD_DIR=$(BUILD_DIR) TEMPLATE_DIR=$(TEMPLATE_DIR) OUT_USER_DATA=$(USER_DATA) OUT_META_DATA=$(META_DATA) INSTANCE_ID_PREFIX=$(INSTANCE_ID_PREFIX) ./logic/scripts/prepare.sh
 	@if [ -f $(EFI_VARS_SRC) ]; then \
 		cp $(EFI_VARS_SRC) $(VARS_FILE); \
 		echo "✅ Copied $(ARCH) EFI vars to $(VARS_FILE)"; \
@@ -107,8 +153,11 @@ prepare: setup
 	fi
 
 download: setup
+ifneq ($(LAYER),)
+	@echo "⏭️  LAYER=$(LAYER) set: skipping download. Layers build on top of an existing base image ($(LAYER_BASE_IMAGE))."
+else
 	@if [ ! -f $(DOWNLOADED_IMG) ]; then \
-		echo "🌍 Downloading official Ubuntu 24.04 LTS $(ARCH) Cloud Image..."; \
+		echo "🌍 Downloading official $(DISTRO) $(OS_VERSION) $(ARCH) Cloud Image..."; \
 		curl -L -o $(DOWNLOADED_IMG) $(IMAGE_URL); \
 	else \
 		echo "✅ $(DOWNLOADED_IMG) already exists."; \
@@ -119,24 +168,26 @@ download: setup
 		echo "📏 Resizing pristine base disk to 25G..."; \
 		qemu-img resize $(BASE_DISK) 25G; \
 	fi
+endif
 
 cloud-init: setup
-	@if [ ! -f $(BUILD_DIR)/user-data ] || [ ! -f $(BUILD_DIR)/meta-data ]; then \
-		echo "❌ Error: user-data or meta-data is missing in $(BUILD_DIR). Run 'make prepare' first."; \
+	@if [ ! -f $(USER_DATA) ] || [ ! -f $(META_DATA) ]; then \
+		echo "❌ Error: $(USER_DATA) or $(META_DATA) is missing. Run 'make prepare' first."; \
 		exit 1; \
 	fi
 	@echo "📦 Packaging cloud-init files into $(CLOUD_INIT_ISO) using macOS hdiutil..."
 	@rm -rf $(BUILD_DIR)/cidata
 	@mkdir -p $(BUILD_DIR)/cidata
-	@cp $(BUILD_DIR)/user-data $(BUILD_DIR)/meta-data $(BUILD_DIR)/cidata/
+	@cp $(USER_DATA) $(BUILD_DIR)/cidata/user-data
+	@cp $(META_DATA) $(BUILD_DIR)/cidata/meta-data
 	@rm -f $(CLOUD_INIT_ISO)
 	hdiutil makehybrid -iso -joliet -default-volume-name cidata -o $(CLOUD_INIT_ISO) $(BUILD_DIR)/cidata/
 	@rm -rf $(BUILD_DIR)/cidata
 	@echo "✅ $(CLOUD_INIT_ISO) generated successfully."
 
 run: setup
-	@if [ ! -f $(BASE_DISK) ]; then \
-		echo "❌ Error: $(BASE_DISK) does not exist. Run 'make download' first."; \
+	@if [ ! -f $(SOURCE_DISK) ]; then \
+		echo "❌ Error: $(SOURCE_DISK) does not exist. $(if $(LAYER),Build the base image first via 'make test-run DISTRO=$(DISTRO)' + 'make sysprep' + 'make build' or set LAYER_BASE_IMAGE=<path>.,Run 'make download' first.)"; \
 		exit 1; \
 	fi
 	@if [ ! -f $(CLOUD_INIT_ISO) ]; then \
@@ -145,7 +196,7 @@ run: setup
 	fi
 	@if [ ! -f $(VARS_FILE) ]; then \
 		echo "⚠️  Warning: $(VARS_FILE) not found. Running prepare target..."; \
-		$(MAKE) prepare ARCH=$(ARCH); \
+		$(MAKE) prepare ARCH=$(ARCH) DISTRO=$(DISTRO) LAYER=$(LAYER); \
 	fi
 	@if [ ! -f $(EFI_CODE) ]; then \
 		echo "❌ Error: $(ARCH) EFI firmware not found at $(EFI_CODE)."; \
@@ -153,12 +204,12 @@ run: setup
 		exit 1; \
 	fi
 	@if [ ! -f $(INSTANCE_DISK) ]; then \
-		echo "👯 Creating a fresh ephemeral instance for $(ARCH)..."; \
-		cp $(BASE_DISK) $(INSTANCE_DISK); \
+		echo "👯 Creating a fresh ephemeral instance for $(ARCH) from $(SOURCE_DISK)..."; \
+		cp $(SOURCE_DISK) $(INSTANCE_DISK); \
 	else \
 		echo "✅ Using existing $(INSTANCE_DISK)."; \
 	fi
-	@echo "🖥️  Launching $(ARCH) Desktop VM with $(QEMU_BIN)..."
+	@echo "🖥️  Launching $(ARCH) $(IMAGE_TAG) VM with $(QEMU_BIN)..."
 	@echo "🚀 Acceleration Mode: $(QEMU_ACCEL)"
 	@echo "👀 A native macOS QEMU window will open."
 	@echo "🔐 Username: ubuntu | Password: ubuntu"
@@ -183,7 +234,7 @@ run: setup
 			-device virtio-net-pci,netdev=net0 \
 			-netdev user,id=net0,hostfwd=tcp::2222-:22 & \
 		QEMU_PID=$$!; \
-		echo "🔑 Waiting for VM SSH to come up so its host key can be trusted (first boot installs the desktop, this can take 5-10+ min)..."; \
+		echo "🔑 Waiting for VM SSH to come up so its host key can be trusted (first boot installs packages, this can take 5-10+ min)..."; \
 		KEY_PINNED=0; \
 		for i in $$(seq 1 300); do \
 			ssh-keyscan -4 -T 2 -p 2222 -H localhost >> ~/.ssh/known_hosts 2>/dev/null && { KEY_PINNED=1; break; }; \
@@ -221,7 +272,7 @@ sysprep:
 
 build: setup
 	@if [ ! -f $(INSTANCE_DISK) ]; then \
-		echo "❌ Error: $(INSTANCE_DISK) not found. You must run the VM first to install the desktop."; \
+		echo "❌ Error: $(INSTANCE_DISK) not found. You must run the VM first."; \
 		exit 1; \
 	fi
 	@echo "🏗️  Preparing final artifact for OCI packaging..."

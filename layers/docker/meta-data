@@ -1,0 +1,2 @@
+instance-id: docker-layer-base
+local-hostname: ubuntu-docker
