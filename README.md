@@ -172,6 +172,17 @@ astroimg push          # push the artifact to the registry with ORAS
 astroimg test-oci      # pull it back down and verify it with qemu-img
 ```
 
+In `--headless` mode there's no GUI window to watch, so `run`/`pipeline`
+print a heartbeat every ~15-30s while waiting on the SSH host key and on
+cloud-init so it doesn't look stuck, and stream `cloud-init status --wait`'s
+own progress output live once SSH is up. Add `--verbose` to also tail the
+guest's serial console (boot messages, package-install output) straight to
+your terminal:
+
+```bash
+astroimg run --headless --verbose
+```
+
 `astroimg run` prints the SSH command it's using (scoped to
 `build/known_hosts`, never your real one):
 

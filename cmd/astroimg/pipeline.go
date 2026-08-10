@@ -42,7 +42,7 @@ finalizes the artifact. This is the single command CI calls.`,
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort)
+		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose)
 		if err != nil {
 			return fmt.Errorf("run: %w", err)
 		}

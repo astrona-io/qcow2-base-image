@@ -10,7 +10,9 @@ package qemurun
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -96,6 +98,59 @@ func Start(ctx context.Context, binary string, args []string) (*exec.Cmd, error)
 	return cmd, nil
 }
 
+// TailFile streams newly-appended bytes from path to w, polling until ctx
+// is done. It tolerates the file not existing yet (QEMU creates the serial
+// log lazily on first write), retrying until it appears. Used to surface
+// the guest's serial console in --headless --verbose mode, where there's
+// no GUI window to watch instead.
+func TailFile(ctx context.Context, path string, w io.Writer) error {
+	var (
+		f   *os.File
+		err error
+	)
+
+	for f == nil {
+		f, err = os.Open(path) //nolint:gosec // path is internally constructed (build/<tag>-console.log)
+		if err == nil {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	defer func() { _ = f.Close() }()
+
+	buf := make([]byte, 4096)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			_, _ = w.Write(buf[:n])
+		}
+
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return fmt.Errorf("tailing %s: %w", path, readErr)
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+	}
+}
+
 // WaitForPort blocks until host:port accepts a TCP connection or ctx is done.
 func WaitForPort(ctx context.Context, host string, port int, interval time.Duration) error {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
@@ -170,6 +225,8 @@ func pinHostKeyOnce(ctx context.Context, knownHostsFile string, port int, perAtt
 // WaitAndPinHostKey retries ssh-keyscan against localhost:port every 2s
 // until it succeeds or maxWait elapses, appending the captured host key to
 // a project-local known_hosts file (never the user's real ~/.ssh/known_hosts).
+// It prints a heartbeat every ~30s so a long wait (headless mode has no GUI
+// to watch) doesn't look stuck.
 func WaitAndPinHostKey(ctx context.Context, knownHostsFile string, port int, maxWait time.Duration) error {
 	if err := ensureFile(knownHostsFile); err != nil {
 		return err
@@ -178,9 +235,15 @@ func WaitAndPinHostKey(ctx context.Context, knownHostsFile string, port int, max
 	deadlineCtx, cancel := context.WithTimeout(ctx, maxWait)
 	defer cancel()
 
-	for {
+	start := time.Now()
+
+	for attempt := 0; ; attempt++ {
 		if err := pinHostKeyOnce(deadlineCtx, knownHostsFile, port, 2*time.Second); err == nil {
 			return nil
+		}
+
+		if attempt > 0 && attempt%15 == 0 {
+			fmt.Printf("   ...still waiting for SSH host key (%ds elapsed)\n", int(time.Since(start).Seconds()))
 		}
 
 		select {
@@ -221,20 +284,42 @@ func RunSSH(ctx context.Context, keyPath, knownHostsFile string, port int, user,
 	return out, nil
 }
 
+// RunSSHStreaming executes a remote command over SSH, streaming its output
+// live to stdout/stderr instead of buffering it. Used for long-running
+// remote commands (like `cloud-init status --wait`, which itself prints
+// periodic progress) so a multi-minute wait shows activity instead of
+// looking stuck -- this matters most in --headless mode, where there's no
+// GUI console to watch instead.
+func RunSSHStreaming(ctx context.Context, keyPath, knownHostsFile string, port int, user, host string, remoteCmd ...string) error {
+	args := SSHArgs(keyPath, knownHostsFile, port, user, host, remoteCmd...)
+	cmd := exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // argv-only, args are built by SSHArgs from internally-resolved values
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ssh %s: %w", strings.Join(remoteCmd, " "), err)
+	}
+
+	return nil
+}
+
 // WaitForCloudInit first retries a trivial SSH command until authentication
 // succeeds (sshd comes up well before cloud-init has written
 // ssh_authorized_keys, so early auth failures are expected transient
-// state), then blocks on `cloud-init status --wait`, which cloud-init
-// itself only returns from once provisioning has actually finished --
-// replacing the old fixed-heuristic "SSH is reachable" proxy that CI has no
-// human watching to double check.
+// state), printing a heartbeat every ~15s, then streams
+// `cloud-init status --wait` live -- cloud-init itself only returns from
+// that once provisioning has actually finished (replacing the old
+// fixed-heuristic "SSH is reachable" proxy), and it prints its own periodic
+// progress while waiting, which streaming surfaces instead of hiding.
 func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port int, user, host string, timeout time.Duration) error {
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var lastErr error
 
-	for {
+	start := time.Now()
+
+	for attempt := 0; ; attempt++ {
 		attemptCtx, cancelAttempt := context.WithTimeout(deadlineCtx, 15*time.Second)
 		_, err := RunSSH(attemptCtx, keyPath, knownHostsFile, port, user, host, "true")
 
@@ -246,6 +331,10 @@ func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port 
 
 		lastErr = err
 
+		if attempt > 0 && attempt%5 == 0 {
+			fmt.Printf("   ...still waiting for SSH auth (%ds elapsed)\n", int(time.Since(start).Seconds()))
+		}
+
 		select {
 		case <-deadlineCtx.Done():
 			return fmt.Errorf("SSH auth never became ready: %w", lastErr)
@@ -253,8 +342,9 @@ func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port 
 		}
 	}
 
-	_, err := RunSSH(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--wait")
-	if err != nil {
+	fmt.Println("SSH ready, waiting for cloud-init to finish provisioning...")
+
+	if err := RunSSHStreaming(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--wait"); err != nil {
 		return fmt.Errorf("waiting for cloud-init to finish: %w", err)
 	}
 

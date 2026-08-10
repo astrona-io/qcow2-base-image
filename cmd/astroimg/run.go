@@ -27,7 +27,7 @@ var runCmd = &cobra.Command{
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		qemuCmd, _, err := startVM(cmd.Context(), r, headless, flagSSHPort)
+		qemuCmd, _, err := startVM(cmd.Context(), r, headless, flagSSHPort, flagVerbose)
 		if err != nil {
 			return err
 		}
@@ -42,42 +42,14 @@ var runCmd = &cobra.Command{
 // instance disk if needed, launches qemu-system-*, and waits for its SSH
 // host key to be reachable and pinned. It returns the running process
 // handle (whose Wait() blocks until the guest powers off) and the
-// project-local known_hosts path used to reach it.
-func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int) (*exec.Cmd, string, error) {
-	if _, err := os.Stat(r.SourceDisk); errors.Is(err, os.ErrNotExist) {
-		hint := "run 'astroimg download' first"
-		if r.Layer != "" {
-			hint = fmt.Sprintf("build the base image first ('astroimg pipeline --distro %s'), or pass --layer-base-image", r.Distro)
-		}
-
-		return nil, "", fmt.Errorf("%s does not exist: %s", r.SourceDisk, hint)
-	}
-
-	if _, err := os.Stat(r.CloudInitISO); errors.Is(err, os.ErrNotExist) {
-		return nil, "", fmt.Errorf("%s does not exist, run 'astroimg iso' first", r.CloudInitISO)
-	}
-
-	if _, err := os.Stat(r.VarsFile); errors.Is(err, os.ErrNotExist) {
-		fmt.Println("vars file missing, running prepare...")
-
-		if err := doPrepare(ctx, r); err != nil {
-			return nil, "", err
-		}
-	}
-
-	qcfg, err := platform.DetectForHost(r.Arch)
+// project-local known_hosts path used to reach it. When headless and
+// verbose are both set, the guest's serial console is tailed live to
+// stdout -- otherwise headless mode has no visible output at all until the
+// SSH-wait heartbeats kick in, which can look stuck.
+func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int, verbose bool) (*exec.Cmd, string, error) {
+	qcfg, err := prepareVMDisks(ctx, r)
 	if err != nil {
 		return nil, "", err
-	}
-
-	if _, err := os.Stat(r.InstanceDisk); errors.Is(err, os.ErrNotExist) {
-		fmt.Printf("creating fresh ephemeral instance from %s...\n", r.SourceDisk)
-
-		if err := copyFile(r.SourceDisk, r.InstanceDisk); err != nil {
-			return nil, "", err
-		}
-	} else {
-		fmt.Printf("using existing %s\n", r.InstanceDisk)
 	}
 
 	knownHostsFile := filepath.Join(r.BuildDir, "known_hosts")
@@ -109,6 +81,12 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int)
 		return nil, "", err
 	}
 
+	if headless && verbose {
+		fmt.Printf("tailing guest console live (%s) -- omit --verbose for quieter output\n", qrCfg.SerialLogPath)
+
+		go func() { _ = qemurun.TailFile(ctx, qrCfg.SerialLogPath, os.Stdout) }()
+	}
+
 	fmt.Println("waiting for VM SSH host key (first boot can take 5-10+ min)...")
 
 	if err := qemurun.WaitAndPinHostKey(ctx, knownHostsFile, sshPort, 10*time.Minute); err != nil {
@@ -118,4 +96,48 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int)
 	}
 
 	return cmd, knownHostsFile, nil
+}
+
+// prepareVMDisks validates that the source disk and cloud-init ISO exist,
+// renders a missing vars file via prepare if needed, detects this host's
+// QEMU config, and clones the source disk into a fresh instance disk if one
+// doesn't already exist.
+func prepareVMDisks(ctx context.Context, r config.Resolved) (platform.QEMUConfig, error) {
+	if _, err := os.Stat(r.SourceDisk); errors.Is(err, os.ErrNotExist) {
+		hint := "run 'astroimg download' first"
+		if r.Layer != "" {
+			hint = fmt.Sprintf("build the base image first ('astroimg pipeline --distro %s'), or pass --layer-base-image", r.Distro)
+		}
+
+		return platform.QEMUConfig{}, fmt.Errorf("%s does not exist: %s", r.SourceDisk, hint)
+	}
+
+	if _, err := os.Stat(r.CloudInitISO); errors.Is(err, os.ErrNotExist) {
+		return platform.QEMUConfig{}, fmt.Errorf("%s does not exist, run 'astroimg iso' first", r.CloudInitISO)
+	}
+
+	if _, err := os.Stat(r.VarsFile); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("vars file missing, running prepare...")
+
+		if err := doPrepare(ctx, r); err != nil {
+			return platform.QEMUConfig{}, err
+		}
+	}
+
+	qcfg, err := platform.DetectForHost(r.Arch)
+	if err != nil {
+		return platform.QEMUConfig{}, err
+	}
+
+	if _, err := os.Stat(r.InstanceDisk); errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("creating fresh ephemeral instance from %s...\n", r.SourceDisk)
+
+		if err := copyFile(r.SourceDisk, r.InstanceDisk); err != nil {
+			return platform.QEMUConfig{}, err
+		}
+	} else {
+		fmt.Printf("using existing %s\n", r.InstanceDisk)
+	}
+
+	return qcfg, nil
 }
