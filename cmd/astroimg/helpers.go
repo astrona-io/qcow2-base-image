@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -34,6 +35,20 @@ func copyFile(src, dst string) error {
 	}
 
 	return out.Close()
+}
+
+// createOverlayDisk creates a new qcow2 file at instancePath backed by
+// basePath: it starts as a tiny (few-hundred-KB) file, and QEMU reads
+// unmodified blocks straight from the base at boot, only writing new or
+// changed blocks into the overlay itself. Used for layer builds so the
+// instance disk isn't a full copy of the (often multi-GB) base.
+func createOverlayDisk(ctx context.Context, basePath, instancePath string) error {
+	absBase, err := filepath.Abs(basePath)
+	if err != nil {
+		return fmt.Errorf("resolving absolute path for %s: %w", basePath, err)
+	}
+
+	return runExternal(ctx, "qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", absBase, instancePath)
 }
 
 // runExternal runs an external tool with an explicit argv (never a shell

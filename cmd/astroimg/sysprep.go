@@ -25,7 +25,7 @@ func doSysprep(ctx context.Context, buildDir string, sshPort int) error {
 	fmt.Println("connecting to VM to wipe cloud-init state, SSH host keys, and authorized_keys...")
 
 	if _, err := qemurun.RunSSH(ctx, keyPath, knownHostsFile, sshPort, "ubuntu", "localhost", qemurun.SysprepRemoteCommand); err != nil {
-		// The remote command ends in `sudo halt`, which terminates the SSH
+		// The remote command ends in `sudo poweroff`, which terminates the SSH
 		// session out from under us -- that looks like an SSH error but is
 		// the expected, successful outcome.
 		fmt.Println("note: SSH session ended (expected once the guest halts):", err)

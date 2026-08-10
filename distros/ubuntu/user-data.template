@@ -10,7 +10,6 @@ bootcmd:
   - [ sh, -c, 'echo "\n========================================================" > /dev/tty1' ]
   - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING DESKTOP ENVIRONMENT" > /dev/tty1' ]
   - [ sh, -c, 'echo "  Please wait 5-10 minutes. The screen will scroll logs." > /dev/tty1' ]
-  - [ sh, -c, 'echo "  The VM will automatically reboot when finished.     " > /dev/tty1' ]
   - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
 
 users:
@@ -56,7 +55,10 @@ runcmd:
   - systemctl enable gdm3
   - echo "VM Desktop Base Template Ready" > /etc/motd
 
-power_state:
-  mode: reboot
-  message: "Cloud-init finished installing the desktop environment. Rebooting to apply changes..."
-  timeout: 5
+# No power_state reboot here on purpose: `astroimg pipeline` runs sysprep
+# automatically the instant `cloud-init status --wait` returns, over SSH to
+# this same first boot. A reboot here would race that automated sysprep
+# (the guest could be mid-reboot, with sshd down, right when we try to
+# connect) -- it only ever worked by luck in the old interactive Makefile
+# flow because a human took much longer than a reboot to type
+# `make sysprep` in a second terminal.

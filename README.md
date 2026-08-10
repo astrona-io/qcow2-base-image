@@ -91,6 +91,54 @@ To add a new distro, create `distros/<name>/{user-data.template,meta-data,distro
 following `distros/ubuntu/` as a template. `astroimg list distros` /
 `astroimg list layers` show what's available.
 
+### Image size: cleanup, compression, and small layers
+
+A freshly-installed Ubuntu desktop base easily lands around 7G. `astroimg`
+keeps that down in two independent ways:
+
+**1. Sysprep cleanup + compression (shrinks the base itself).** `sysprep`
+now also runs `apt-get clean`, drops `/var/lib/apt/lists/*`, vacuums the
+journal, clears `/tmp`, and runs `fstrim -av` before halting -- paired with
+`discard=unmap` on the VM's disk drive, this actually punches the freed
+blocks out of the qcow2 file instead of leaving them allocated. `build` then
+runs `qemu-img convert -O qcow2 -c` (zlib compression) into the final
+artifact instead of a plain rename. Freeing space before compressing
+matters a lot: discarded/zeroed blocks compress far better than
+freed-but-still-allocated ones.
+
+**2. Backing-file overlays for layers (keeps layers small).** A layer's
+instance disk is no longer a full copy of the base -- it's created as a
+qcow2 **backing-file overlay** (`qemu-img create -b <base> -F qcow2`):
+unmodified blocks are read straight from the base at boot, and only new or
+changed blocks (e.g. installing `docker.io`) get written into the overlay
+itself. `build` compresses that overlay while *preserving* the backing-file
+reference, so the final layer artifact is genuinely just the delta -- a
+base at 7G plus a docker layer might only add ~100M, not another 7G file.
+
+**The tradeoff you need to know**: a backing-file overlay is **not a
+standalone image**. It stores a path reference to its base and won't boot
+without that exact base file present. This changes how you distribute a
+layer:
+
+- Push and keep both the base and the layer artifact available to whoever
+  consumes the layer (`astroimg push --distro ubuntu` and
+  `astroimg push --distro ubuntu --layer docker` push them as separate OCI
+  artifacts).
+- If the base ends up at a different path on the consuming machine than it
+  had at build time, re-point the layer at it before booting:
+  ```bash
+  qemu-img rebase -u -F qcow2 -f qcow2 -b /path/to/base-ubuntu-arm64.qcow2 ubuntu-24.04-desktop-docker-arm64.qcow2
+  ```
+- If you need a single, fully self-contained file instead (simpler
+  distribution, larger file), pass `--flatten` to `build`/`pipeline` for
+  that layer: it folds the base's data into the output instead of keeping
+  the backing-file reference, trading the size win for portability.
+
+```bash
+astroimg pipeline --distro ubuntu --layer docker --flatten
+# -> a standalone ubuntu-24.04-desktop-docker-arm64.qcow2, no base needed to boot it
+```
+
 ---
 
 ## Prerequisites

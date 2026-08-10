@@ -62,7 +62,11 @@ func BuildArgs(cfg Config) []string {
 		"-m", strconv.Itoa(mem),
 		"-drive", "if=pflash,format=raw,readonly=on,file="+cfg.QEMU.EFICode,
 		"-drive", "if=pflash,format=raw,file="+cfg.VarsFile,
-		"-drive", "if=virtio,file="+cfg.InstanceDisk+",format=qcow2",
+		// discard=unmap+detect-zeroes=unmap let the guest's `fstrim` (run
+		// during sysprep) actually punch freed blocks out of the qcow2
+		// file instead of leaving them allocated -- without this, deleted
+		// apt cache/logs/etc. keep taking up space in the image forever.
+		"-drive", "if=virtio,file="+cfg.InstanceDisk+",format=qcow2,discard=unmap,detect-zeroes=unmap",
 		"-drive", "if=virtio,file="+cfg.CloudInitISO+",format=raw",
 		"-smbios", "type=1,serial=ds=nocloud",
 		"-device", "virtio-net-pci,netdev=net0",
@@ -345,7 +349,23 @@ func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port 
 	fmt.Println("SSH ready, waiting for cloud-init to finish provisioning...")
 
 	if err := RunSSHStreaming(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--wait"); err != nil {
-		return fmt.Errorf("waiting for cloud-init to finish: %w", err)
+		// cloud-init status --wait's exit code isn't just 0/1: 0 means
+		// done with no issues, 1 means a hard error, but 2 means "done,
+		// but a module hit a recoverable error" (cloud-init calls this
+		// "degraded"). Provisioning did finish in that case -- the guest
+		// booted, packages installed -- so treat it as success and just
+		// surface what was degraded, rather than failing the whole build
+		// over what's often a non-fatal warning.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			fmt.Println("warning: cloud-init finished in a degraded state (recoverable errors), continuing. Details:")
+
+			if out, longErr := RunSSH(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--long"); longErr == nil {
+				fmt.Println(string(out))
+			}
+		} else {
+			return fmt.Errorf("waiting for cloud-init to finish: %w", err)
+		}
 	}
 
 	return nil
@@ -371,9 +391,19 @@ func GenerateSSHKey(ctx context.Context, path string) error {
 }
 
 // SysprepRemoteCommand is the fixed (no interpolated input) shell command
-// run on the guest to wipe cloud-init state, host SSH keys, and the
-// injected authorized_keys before the disk is sealed as a golden image.
+// run on the guest to wipe cloud-init state, host SSH keys, and injected
+// authorized_keys, then clean up apt/log/tmp cruft and discard the freed
+// blocks (fstrim, paired with discard=unmap on the qemu drive -- see
+// BuildArgs) before the disk is sealed as a golden image. The cleanup
+// matters because `astroimg build` compresses the final image: freed-but-
+// still-allocated blocks compress far worse than blocks that were actually
+// discarded down to zero.
 const SysprepRemoteCommand = "sudo cloud-init clean --logs --machine-id && " +
 	"sudo rm -f /home/ubuntu/.ssh/authorized_keys && " +
 	"sudo rm -f /etc/ssh/ssh_host_* && " +
-	"sudo sync && sudo halt"
+	"sudo apt-get clean && " +
+	"sudo rm -rf /var/lib/apt/lists/* && " +
+	"sudo journalctl --vacuum-time=1s && " +
+	"sudo rm -rf /tmp/* /var/tmp/* && " +
+	"sudo fstrim -av && " +
+	"sudo sync && sudo poweroff"

@@ -25,6 +25,7 @@ var (
 	flagRegistry       string
 	flagGHUser         string
 	flagVerbose        bool
+	flagFlatten        bool
 )
 
 var rootCmd = &cobra.Command{
@@ -44,6 +45,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagRegistry, "registry", "ghcr.io", "OCI registry for push/test-oci")
 	rootCmd.PersistentFlags().StringVar(&flagGHUser, "gh-user", "", "registry namespace/user for push/test-oci (default: git config user.name)")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
 	rootCmd.PersistentFlags().Bool("headless", false, "run QEMU without a GUI window (default: auto-detect via $CI / host OS)")
 
 	rootCmd.AddCommand(

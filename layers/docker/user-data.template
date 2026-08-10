@@ -24,7 +24,5 @@ runcmd:
   - usermod -aG docker ubuntu
   - echo "Docker layer applied" >> /etc/motd
 
-power_state:
-  mode: reboot
-  message: "Layer cloud-init finished. Rebooting to apply changes..."
-  timeout: 5
+# No power_state reboot here on purpose -- see distros/ubuntu/user-data.template
+# for why: it would race astroimg pipeline's automated post-cloud-init sysprep.

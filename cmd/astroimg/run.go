@@ -18,8 +18,10 @@ import (
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Boot the VM instance and leave it running (interactive use: run 'astroimg sysprep' from elsewhere once it's provisioned)",
+	Short: "Boot the VM instance (add --seal to also wait for cloud-init, sysprep, and wait for shutdown)",
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		ctx := cmd.Context()
+
 		r, _, err := resolveBuild(cmd)
 		if err != nil {
 			return err
@@ -27,15 +29,81 @@ var runCmd = &cobra.Command{
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		qemuCmd, _, err := startVM(cmd.Context(), r, headless, flagSSHPort, flagVerbose)
+		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose)
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("VM running. When finished, run 'astroimg sysprep' to seal the golden image.")
+		seal, _ := cmd.Flags().GetBool("seal")
+		if !seal {
+			fmt.Println("VM running. When finished, run 'astroimg sysprep' to seal the golden image.")
+			return qemuCmd.Wait()
+		}
 
-		return qemuCmd.Wait()
+		if err := sealVM(ctx, r, qemuCmd, knownHostsFile); err != nil {
+			return err
+		}
+
+		fmt.Println("sealed. Run 'astroimg build' to finalize the artifact.")
+
+		return nil
 	},
+}
+
+func init() {
+	runCmd.Flags().Bool("seal", false, "wait for cloud-init to finish, sysprep, and wait for shutdown automatically (skips the final 'astroimg build' rename -- run that yourself after)")
+}
+
+// sealVM waits for cloud-init to finish, runs sysprep over SSH, and waits
+// for the guest to power off -- the automated "finish building" tail shared
+// by `pipeline` and `run --seal`.
+func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHostsFile string) error {
+	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
+
+	fmt.Println("waiting for cloud-init to finish provisioning (this can take 5-10+ min)...")
+
+	if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, "ubuntu", "localhost", 30*time.Minute); err != nil {
+		return fmt.Errorf("waiting for cloud-init: %w", err)
+	}
+
+	fmt.Println("cloud-init finished provisioning, sealing the image...")
+
+	if err := doSysprep(ctx, r.BuildDir, flagSSHPort); err != nil {
+		return fmt.Errorf("sysprep: %w", err)
+	}
+
+	fmt.Println("waiting for the VM to power off...")
+
+	if err := waitForShutdown(qemuCmd, 2*time.Minute); err != nil {
+		return fmt.Errorf("%w -- check %s", err, filepath.Join(r.BuildDir, r.ImageTag+"-console.log"))
+	}
+
+	return nil
+}
+
+// waitForShutdown blocks until qemuCmd exits or maxWait elapses. If sysprep's
+// `sudo poweroff` never actually reaches the guest (e.g. it rebooted instead, or
+// the SSH command failed silently), qemuCmd.Wait() alone would block
+// forever with no feedback -- this forces a clear, actionable error and
+// kills the process instead of hanging indefinitely.
+func waitForShutdown(qemuCmd *exec.Cmd, maxWait time.Duration) error {
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- qemuCmd.Wait() }()
+
+	select {
+	case err := <-waitErr:
+		if err != nil {
+			// `sudo poweroff` inside the guest is what ends the qemu process;
+			// depending on platform that can surface as a non-zero exit,
+			// which is expected here, not a failure.
+			fmt.Println("note: qemu exited with:", err)
+		}
+
+		return nil
+	case <-time.After(maxWait):
+		_ = qemuCmd.Process.Kill()
+		return fmt.Errorf("guest did not power off within %s after sysprep", maxWait)
+	}
 }
 
 // startVM validates prerequisites, clones the source disk into a fresh
@@ -130,9 +198,7 @@ func prepareVMDisks(ctx context.Context, r config.Resolved) (platform.QEMUConfig
 	}
 
 	if _, err := os.Stat(r.InstanceDisk); errors.Is(err, os.ErrNotExist) {
-		fmt.Printf("creating fresh ephemeral instance from %s...\n", r.SourceDisk)
-
-		if err := copyFile(r.SourceDisk, r.InstanceDisk); err != nil {
+		if err := createInstanceDisk(ctx, r); err != nil {
 			return platform.QEMUConfig{}, err
 		}
 	} else {
@@ -140,4 +206,19 @@ func prepareVMDisks(ctx context.Context, r config.Resolved) (platform.QEMUConfig
 	}
 
 	return qcfg, nil
+}
+
+// createInstanceDisk creates r.InstanceDisk from r.SourceDisk: a
+// copy-on-write overlay for layer builds (so the instance disk isn't a full
+// copy of the base), or a full clone for base builds (which have no base of
+// their own to reference).
+func createInstanceDisk(ctx context.Context, r config.Resolved) error {
+	if r.Layer != "" {
+		fmt.Printf("creating copy-on-write overlay instance backed by %s...\n", r.SourceDisk)
+		return createOverlayDisk(ctx, r.SourceDisk, r.InstanceDisk)
+	}
+
+	fmt.Printf("creating fresh ephemeral instance from %s...\n", r.SourceDisk)
+
+	return copyFile(r.SourceDisk, r.InstanceDisk)
 }

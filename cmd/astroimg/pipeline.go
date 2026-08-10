@@ -2,13 +2,10 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/astrona-io/qcow2-base-image/internal/platform"
-	"github.com/astrona-io/qcow2-base-image/internal/qemurun"
 )
 
 var pipelineCmd = &cobra.Command{
@@ -47,30 +44,11 @@ finalizes the artifact. This is the single command CI calls.`,
 			return fmt.Errorf("run: %w", err)
 		}
 
-		keyPath := filepath.Join(r.BuildDir, "id_ed25519")
-
-		fmt.Println("waiting for cloud-init to finish provisioning (this can take 5-10+ min)...")
-
-		if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, "ubuntu", "localhost", 30*time.Minute); err != nil {
-			return fmt.Errorf("waiting for cloud-init: %w", err)
+		if err := sealVM(ctx, r, qemuCmd, knownHostsFile); err != nil {
+			return err
 		}
 
-		fmt.Println("cloud-init finished provisioning, sealing the image...")
-
-		if err := doSysprep(ctx, r.BuildDir, flagSSHPort); err != nil {
-			return fmt.Errorf("sysprep: %w", err)
-		}
-
-		fmt.Println("waiting for the VM to power off...")
-
-		if err := qemuCmd.Wait(); err != nil {
-			// `sudo halt` inside the guest is what ends the qemu process;
-			// depending on platform that can surface as a non-zero exit,
-			// which is expected here, not a pipeline failure.
-			fmt.Println("note: qemu exited with:", err)
-		}
-
-		if err := doBuild(r); err != nil {
+		if err := doBuild(ctx, r, flagFlatten); err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
 
