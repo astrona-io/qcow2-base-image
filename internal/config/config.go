@@ -208,8 +208,16 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 		r.SourceDisk = r.LayerBaseImage
 	}
 
+	// A layer's in-progress disk is a copy-on-write overlay backed by the
+	// base (see cmd/astroimg createInstanceDisk), not a full clone, so it
+	// gets its own "overlay-" prefix instead of "instance-" to say so.
+	instancePrefix := "instance"
+	if opts.Layer != "" {
+		instancePrefix = "overlay"
+	}
+
 	r.FinalImageName = fmt.Sprintf("%s-%s.qcow2", r.ImageTag, opts.Arch)
-	r.InstanceDisk = filepath.Join(buildDir, fmt.Sprintf("instance-%s-%s.qcow2", r.ImageTag, opts.Arch))
+	r.InstanceDisk = filepath.Join(buildDir, fmt.Sprintf("%s-%s-%s.qcow2", instancePrefix, r.ImageTag, opts.Arch))
 	r.VarsFile = filepath.Join(buildDir, fmt.Sprintf("vars-%s.fd", opts.Arch))
 	r.CloudInitISO = filepath.Join(buildDir, r.ImageTag+"-cloud-init.iso")
 	r.UserData = filepath.Join(buildDir, r.ImageTag+"-user-data")
