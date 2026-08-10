@@ -1,0 +1,90 @@
+name: Build golden image
+
+# Manual trigger only: a full desktop-package install inside the guest takes
+# 5-10+ minutes and consumes Actions minutes, so this deliberately doesn't
+# run on every push. Wire up a schedule/push trigger yourself if you want
+# that tradeoff.
+on:
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: "Distro to build (see distros/)"
+        default: ubuntu
+        required: false
+      layer:
+        description: "Optional layer to build on top of a finished base image (see layers/)"
+        default: ""
+        required: false
+      push:
+        description: "Push the built artifact to the registry"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            qemu_packages: qemu-system-x86 ovmf
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            qemu_packages: qemu-system-arm qemu-efi-aarch64
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU + EFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Verify KVM is available
+        run: |
+          test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Build astroimg
+        run: go build -o bin/astroimg ./cmd/astroimg
+
+      - name: Run pipeline (headless)
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "${{ inputs.distro }}" \
+            --layer "${{ inputs.layer }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ inputs.distro }}${{ inputs.layer != '' && format('-{0}', inputs.layer) || '' }}-${{ matrix.arch }}
+          path: build/*.qcow2
+          retention-days: 7
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push artifact
+        if: ${{ inputs.push }}
+        run: |
+          ./bin/astroimg push \
+            --distro "${{ inputs.distro }}" \
+            --layer "${{ inputs.layer }}" \
+            --arch "${{ matrix.arch }}" \
+            --registry ghcr.io \
+            --gh-user "${{ github.repository_owner }}"

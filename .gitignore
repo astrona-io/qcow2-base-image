@@ -27,3 +27,6 @@ build/*
 .clinerules/
 .github/copilot-instructions.md
 .opencode/
+
+# Go build output
+bin/
