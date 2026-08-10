@@ -53,6 +53,15 @@ runcmd:
   - systemctl enable qemu-guest-agent
   - systemctl start qemu-guest-agent
   - systemctl enable gdm3
+  # QEMU's user-mode networking never provides IPv6 router advertisements,
+  # so systemd-networkd-wait-online.service (which by default waits for
+  # dual-stack "routable" state) burns its own ~90-120s internal timeout on
+  # every boot before giving up and letting boot continue anyway -- it
+  # doesn't fail the boot, just delays it. Masking it removes that stall
+  # entirely for every future boot of this image (including layers built on
+  # top of it), since SSH/cloud-init's own network handling doesn't
+  # actually need it.
+  - systemctl mask systemd-networkd-wait-online.service
   - echo "VM Desktop Base Template Ready" > /etc/motd
 
 # No power_state reboot here on purpose: `astroimg pipeline` runs sysprep

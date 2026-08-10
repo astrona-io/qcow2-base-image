@@ -133,6 +133,14 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		Headless:      headless,
 		SerialLogPath: filepath.Join(r.BuildDir, r.ImageTag+"-console.log"),
 	}
+
+	// QEMU's -serial file: backend appends to an existing file rather than
+	// truncating it, so a stale log from a previous run would otherwise get
+	// replayed by --verbose's console tail before catching up to the
+	// current boot -- very confusing to read. Best-effort: an absent file
+	// isn't an error.
+	_ = os.Remove(qrCfg.SerialLogPath)
+
 	args := qemurun.BuildArgs(qrCfg)
 
 	keyPath := filepath.Join(r.BuildDir, "id_ed25519")

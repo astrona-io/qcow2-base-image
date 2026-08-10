@@ -69,7 +69,15 @@ func BuildArgs(cfg Config) []string {
 		"-drive", "if=virtio,file="+cfg.InstanceDisk+",format=qcow2,discard=unmap,detect-zeroes=unmap",
 		"-drive", "if=virtio,file="+cfg.CloudInitISO+",format=raw",
 		"-smbios", "type=1,serial=ds=nocloud",
-		"-device", "virtio-net-pci,netdev=net0",
+		// Fixed MAC: without one, QEMU auto-assigns a different MAC on
+		// every launch. cloud-init's NoCloud datasource writes a
+		// MAC-matched netplan/networkd config on first boot, so a later
+		// boot (a layer, or just re-running) with a different auto-MAC
+		// never matches it -- the interface never gets DHCP'd, and
+		// systemd-networkd-wait-online.service stalls for its own ~90-120s
+		// internal timeout before boot can continue. One fixed MAC across
+		// every boot of every image keeps that config valid always.
+		"-device", "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56",
 		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:22", sshPort),
 	)
 
