@@ -9,6 +9,14 @@ Desktop template, but the underlying mechanics (cloud-init compilation,
 sysprep wiping, and ORAS distribution) are universally applicable to modern
 Linux distributions.
 
+## 💖 Support & Sponsoring
+
+If you find this project helpful for your infrastructure, test labs, or daily workflow, please consider supporting the development! Your sponsorship helps maintain and expand these open-source tools.
+
+You can support the project via Liberapay:
+
+[![Liberapay](https://img.shields.io/badge/Liberapay-Support_Astrona.io-F6C915?logo=liberapay&logoColor=black&style=for-the-badge)](https://liberapay.com/Astrona.io)
+
 ## Overview
 
 The pipeline is a single Go CLI, `astroimg` (`cmd/astroimg`), orchestrated
@@ -321,14 +329,6 @@ qemu-system-aarch64 \
 You can now log into the graphical desktop instantly as `labadmin` with the password `testpassword`!
 
 ---
-
-## 💖 Support & Sponsoring
-
-If you find this project helpful for your infrastructure, test labs, or daily workflow, please consider supporting the development! Your sponsorship helps maintain and expand these open-source tools.
-
-You can support the project via Liberapay:
-
-[![Liberapay](https://img.shields.io/badge/Liberapay-Support_Astrona.io-F6C915?logo=liberapay&logoColor=black&style=for-the-badge)](https://liberapay.com/Astrona.io)
 
 ### Hardware & Graphics Acceleration
 
