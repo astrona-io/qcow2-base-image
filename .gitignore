@@ -20,3 +20,12 @@ Icon
 
 # Custom list
 build/*
+
+# Caveman mode rule files (local preference, not for team repo)
+.cursor/
+.windsurf/
+.clinerules/
+.github/copilot-instructions.md
+.opencode/
+AGENTS.md
+CLAUDE.md
