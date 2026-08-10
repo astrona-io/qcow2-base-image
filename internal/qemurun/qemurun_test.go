@@ -59,7 +59,7 @@ func TestBuildArgsGUI(t *testing.T) {
 	args := BuildArgs(cfg)
 	joined := strings.Join(args, " ")
 
-	for _, want := range []string{"-display cocoa,show-cursor=on", "virtio-gpu-pci", "hostfwd=tcp::3333-:22"} {
+	for _, want := range []string{"-display cocoa,show-cursor=on,zoom-to-fit=on", "virtio-gpu-pci", "hostfwd=tcp::3333-:22"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q; got: %s", want, joined)
 		}

@@ -185,5 +185,9 @@ func DisplayArgs(headless bool, serialLogPath string) []string {
 		return []string{flagDisplay, "none", "-serial", "file:" + filepath.Clean(serialLogPath)}
 	}
 
-	return []string{flagDisplay, "cocoa,show-cursor=on"}
+	// zoom-to-fit makes the cocoa window resizable and scales the guest
+	// framebuffer to fit whatever size you drag it to -- without it the
+	// window is fixed at the guest's native (low) resolution, which looks
+	// tiny and can't be resized at all, especially on a Retina display.
+	return []string{flagDisplay, "cocoa,show-cursor=on,zoom-to-fit=on"}
 }

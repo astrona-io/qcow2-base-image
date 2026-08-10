@@ -71,7 +71,7 @@ func TestDisplayArgsHeadless(t *testing.T) {
 
 func TestDisplayArgsGUI(t *testing.T) {
 	got := DisplayArgs(false, "")
-	want := []string{"-display", "cocoa,show-cursor=on"}
+	want := []string{"-display", "cocoa,show-cursor=on,zoom-to-fit=on"}
 	assertEqualSlice(t, got, want)
 }
 

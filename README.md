@@ -384,8 +384,13 @@ You can now log into the graphical desktop instantly as `labadmin` with the pass
 - Software emulation (`-cpu cortex-a57` / `-cpu qemu64`) otherwise.
 - `-smp 4 -m 4096`: 4 CPU cores and 4GB of RAM.
 - Interactive (non-headless) runs add
-  `-device virtio-gpu-pci -display cocoa,show-cursor=on -device
-  virtio-mouse-pci -device virtio-keyboard-pci`.
+  `-device virtio-gpu-pci,xres=1920,yres=1080 -display
+  cocoa,show-cursor=on,zoom-to-fit=on -device virtio-mouse-pci -device
+  virtio-keyboard-pci`. `zoom-to-fit` makes the cocoa window resizable and
+  scales the guest framebuffer to fit whatever size you drag it to --
+  without it the window is stuck at a tiny, fixed, non-resizable size
+  (especially bad on a Retina display). `xres`/`yres` just set a bigger
+  starting size, not a hard limit.
 - Headless runs (`--headless`, auto-enabled under `$CI` or non-macOS hosts)
   use `-display none` with the serial console redirected to a log file
   under `build/`.

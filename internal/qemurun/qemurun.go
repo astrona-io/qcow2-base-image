@@ -85,7 +85,11 @@ func BuildArgs(cfg Config) []string {
 		args = append(args, platform.DisplayArgs(true, cfg.SerialLogPath)...)
 	} else {
 		args = append(args,
-			"-device", "virtio-gpu-pci",
+			// Default virtio-gpu-pci resolution is a cramped 1280x800;
+			// paired with cocoa's zoom-to-fit this just sets a bigger
+			// starting size, not a hard limit -- the window still scales
+			// to whatever size you resize it to.
+			"-device", "virtio-gpu-pci,xres=1920,yres=1080",
 			"-device", "virtio-mouse-pci",
 			"-device", "virtio-keyboard-pci",
 		)
