@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -163,6 +165,33 @@ func ghCLIUsername() string {
 	}
 
 	return strings.TrimSpace(string(out))
+}
+
+type qemuImgInfo struct {
+	BackingFilename string `json:"backing-filename"`
+}
+
+// qemuImgBackingFile reports the backing-file path recorded in path's qcow2
+// header, or "" if it has none.
+func qemuImgBackingFile(ctx context.Context, path string) (string, error) {
+	cmd := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", path) //nolint:gosec // path is internally resolved, not raw user input
+
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("qemu-img info %s: %w (%s)", path, err, exitErr.Stderr)
+		}
+
+		return "", fmt.Errorf("qemu-img info %s: %w", path, err)
+	}
+
+	var info qemuImgInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return "", fmt.Errorf("parsing qemu-img info output: %w", err)
+	}
+
+	return info.BackingFilename, nil
 }
 
 // sanitizeOCIPathComponent lowercases s and collapses every run of

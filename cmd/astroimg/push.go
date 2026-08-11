@@ -29,10 +29,31 @@ var pushCmd = &cobra.Command{
 			return fmt.Errorf("%s not found, run 'astroimg build' first", finalPath)
 		}
 
+		const qcowMediaType = "application/vnd.qemu.disk.qcow2"
+
+		files := []orasclient.File{{Path: finalPath, MediaType: qcowMediaType}}
+
+		if r.Layer != "" {
+			backing, err := qemuImgBackingFile(cmd.Context(), finalPath)
+			if err != nil {
+				return fmt.Errorf("inspecting %s: %w", finalPath, err)
+			}
+
+			if backing != "" {
+				if _, err := os.Stat(r.SourceDisk); errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("%s (this layer's backing base) not found, run 'astroimg build' for the base first", r.SourceDisk)
+				}
+
+				fmt.Printf("bundling base %s into the same manifest (this layer is a backing-file overlay, not --flatten)\n", r.SourceDisk)
+
+				files = append(files, orasclient.File{Path: r.SourceDisk, MediaType: qcowMediaType})
+			}
+		}
+
 		image := ociImage(r)
 		fmt.Printf("pushing %s to %s...\n", finalPath, image)
 
-		if err := orasclient.Push(cmd.Context(), image, finalPath, "application/vnd.qemu.disk.qcow2", ociSourceAnnotations(r.FinalImageName)); err != nil {
+		if err := orasclient.Push(cmd.Context(), image, files, ociSourceAnnotations(r.FinalImageName)); err != nil {
 			return err
 		}
 

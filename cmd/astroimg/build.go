@@ -44,12 +44,12 @@ func doBuild(ctx context.Context, r config.Resolved, flatten bool) error {
 	args := []string{"convert", "-O", "qcow2", "-c"}
 
 	if r.Layer != "" && !flatten {
-		absBase, err := filepath.Abs(r.SourceDisk)
-		if err != nil {
-			return fmt.Errorf("resolving absolute path for %s: %w", r.SourceDisk, err)
-		}
-
-		args = append(args, "-o", "backing_file="+absBase+",backing_fmt=qcow2")
+		// A relative (basename-only) backing_file, not an absolute path: it
+		// resolves against finalPath's own directory both here at build time
+		// (base and layer share BuildDir) and after an OCI pull lands both
+		// files together in one output dir (see push.go/orasclient.Push) --
+		// no rebase step needed on the consuming end either way.
+		args = append(args, "-o", "backing_file="+filepath.Base(r.SourceDisk)+",backing_fmt=qcow2")
 	}
 
 	args = append(args, r.InstanceDisk, finalPath)

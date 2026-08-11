@@ -135,26 +135,6 @@ func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error
 	return r, cfg, nil
 }
 
-// resolveBaseOf returns r unchanged if it's already a base, or resolves
-// and returns the non-layer base it's built on top of. Used by test-oci to
-// find and pull a layer's base alongside it.
-func resolveBaseOf(r config.Resolved) (config.Resolved, error) {
-	if r.Layer == "" {
-		return r, nil
-	}
-
-	cfg, distroDir, err := config.LoadDistro(distrosRoot, r.Distro)
-	if err != nil {
-		return config.Resolved{}, err
-	}
-
-	return config.Resolve(cfg, distroDir, "", config.Options{
-		Distro:   r.Distro,
-		Arch:     r.Arch,
-		BuildDir: r.BuildDir,
-	})
-}
-
 // ociImage builds the OCI artifact reference used by push/test-oci.
 func ociImage(r config.Resolved) string {
 	ghUser := flagGHUser

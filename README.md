@@ -119,22 +119,24 @@ base at 7G plus a docker layer might only add ~100M, not another 7G file.
 
 **The tradeoff you need to know**: a backing-file overlay is **not a
 standalone image**. It stores a path reference to its base and won't boot
-without that exact base file present. This changes how you distribute a
-layer:
+without that exact base file present alongside it. `build` records that
+reference as a *relative* filename (not an absolute build-machine path), so
+it resolves correctly as long as both files end up in the same directory --
+which is exactly what happens next:
 
-- Push and keep both the base and the layer artifact available to whoever
-  consumes the layer (`astroimg push --distro ubuntu` and
-  `astroimg push --distro ubuntu --layer docker` push them as separate OCI
-  artifacts).
-- If the base ends up at a different path on the consuming machine than it
-  had at build time, re-point the layer at it before booting:
-  ```bash
-  qemu-img rebase -u -F qcow2 -f qcow2 -b /path/to/base-ubuntu-arm64.qcow2 ubuntu-24.04-desktop-docker-arm64.qcow2
-  ```
+- `astroimg push` for a layer built without `--flatten` bundles the base
+  qcow2 into the layer's own OCI manifest as a second blob (registries
+  dedupe identical blobs by digest, so this doesn't cost extra storage per
+  layer). One `astroimg push --distro ubuntu --layer docker` is enough --
+  no separate base push required for that layer to be pullable and
+  bootable on its own.
+- Push the base under its own tag too (`astroimg push --distro ubuntu`) if
+  you also want base-only consumers to be able to pull it standalone.
 - If you need a single, fully self-contained file instead (simpler
-  distribution, larger file), pass `--flatten` to `build`/`pipeline` for
-  that layer: it folds the base's data into the output instead of keeping
-  the backing-file reference, trading the size win for portability.
+  distribution, larger file, no bundling), pass `--flatten` to
+  `build`/`pipeline` for that layer: it folds the base's data into the
+  output instead of keeping the backing-file reference, trading the size
+  win for portability.
 
 ```bash
 astroimg pipeline --distro ubuntu --layer docker --flatten
@@ -171,21 +173,18 @@ works, not just what's on disk locally:
 
 ```bash
 astroimg test-oci --distro ubuntu --layer docker
-# 1. pulls the layer artifact from GHCR
-# 2. pulls its base artifact too (a non-flattened layer needs both --
-#    that's what any real downstream consumer has to do)
-# 3. qemu-img rebase -u's the pulled layer onto the pulled base's local
-#    path (the backing-file path baked in at push time pointed at your
-#    build machine, not this one)
-# 4. verifies it with `qemu-img info`
-# 5. forks a throwaway overlay from it, boots it headless, confirms SSH
+# 1. pulls the layer artifact from GHCR -- for a non-flattened layer this
+#    manifest already bundles the base qcow2 too (see "Backing-file
+#    overlays for layers" above), so one pull lands both files together
+#    and the layer's relative backing_file reference resolves as-is
+# 2. verifies it with `qemu-img info`
+# 3. forks a throwaway overlay from it, boots it headless, confirms SSH
 #    login actually works, then deletes the fork
 ```
 
-If you built the layer with `--flatten`, `test-oci` detects it has no
-backing file and skips the base-pull/rebase step -- it's self-contained, one
-pull is enough. For a base image (`--layer` omitted), it's just pull,
-verify, boot-test -- one artifact, no rebase needed either.
+For a flattened layer or a base image (`--layer` omitted), it's the same
+one-pull, verify, boot-test sequence -- there's just no second blob to
+bundle since the artifact is already self-contained.
 
 Both commands need `astroimg build` (or `push`, for `test-oci`) to have
 already produced the artifact you're pointing them at.
@@ -271,7 +270,17 @@ astroimg sysprep       # wipe cloud-init/SSH state and halt the guest
 astroimg build         # compress the sysprepped disk into its final release name
 astroimg test-boot     # fork the finished artifact and boot it, without mutating it
 astroimg push          # push the artifact to the registry with ORAS
-astroimg test-oci      # pull it back down, rebase if needed, and boot-test it
+astroimg test-oci      # pull it back down and boot-test it
+```
+
+`push` never builds anything itself -- it only ships whatever's already at
+`build/<image-tag>-<arch>.qcow2`. Run `build` (directly, or via `pipeline`,
+which ends with a `build` step) first; `push` fails fast with "run
+'astroimg build' first" if that file isn't there yet.
+
+```bash
+astroimg pipeline --distro ubuntu --layer docker   # runs prepare/download/iso/run/sysprep/build
+astroimg push      --distro ubuntu --layer docker
 ```
 
 In `--headless` mode there's no GUI window to watch, so `run`/`pipeline`
@@ -323,8 +332,9 @@ astroimg test-boot --distro ubuntu --layer docker
 echo $GITHUB_TOKEN | oras login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-**5. Push both artifacts.** Base and layer are separate OCI artifacts --
-push both, since the layer is a backing-file overlay, not standalone:
+**5. Push both artifacts.** The layer push bundles the base qcow2 into its
+own manifest automatically (so it's pullable/bootable standalone), but push
+the base under its own tag too, for consumers who just want the base:
 ```bash
 astroimg push --distro ubuntu
 astroimg push --distro ubuntu --layer docker
@@ -334,8 +344,8 @@ override the namespace with `--gh-user` if that's wrong, `--registry` if
 you're not using GHCR.
 
 **6. Verify what's actually sitting in the registry**, not just your local
-files -- this pulls both artifacts fresh, rebases the layer onto the
-just-pulled base, and boot-tests the result:
+files -- this pulls the layer artifact fresh (base included) and boot-tests
+the result:
 ```bash
 astroimg test-oci --distro ubuntu --layer docker
 ```
