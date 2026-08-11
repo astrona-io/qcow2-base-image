@@ -413,8 +413,7 @@ func GenerateSSHKey(ctx context.Context, path string) error {
 const SysprepRemoteCommand = "sudo cloud-init clean --logs --machine-id && " +
 	"sudo rm -f /home/ubuntu/.ssh/authorized_keys && " +
 	"sudo rm -f /etc/ssh/ssh_host_* && " +
-	"sudo apt-get clean && " +
-	"sudo rm -rf /var/lib/apt/lists/* && " +
+	"if command -v apt-get >/dev/null; then sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*; elif command -v dnf >/dev/null; then sudo dnf clean all && sudo rm -rf /var/cache/dnf/*; elif command -v zypper >/dev/null; then sudo zypper clean -a; fi && " +
 	"sudo journalctl --vacuum-time=1s && " +
 	"sudo rm -rf /tmp/* /var/tmp/* && " +
 	"sudo fstrim -av && " +

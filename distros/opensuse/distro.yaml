@@ -1,0 +1,6 @@
+os_version: "15.6"
+os_release: "15.6"
+image_variant: nocloud
+
+image_url_template: "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_{{.Release}}/images/openSUSE-Leap-{{.Release}}.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}-NoCloud.qcow2"
+checksum_url_template: "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_{{.Release}}/images/openSUSE-Leap-{{.Release}}.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}-NoCloud.qcow2.sha256"

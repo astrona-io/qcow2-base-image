@@ -58,13 +58,17 @@ func TestParseSHA256Sums(t *testing.T) {
 	doc := []byte(
 		"abc123def456  noble-server-cloudimg-amd64.img\n" +
 			"deadbeef00 *noble-server-cloudimg-arm64.img\n" +
-			"cafef00d  ./noble-desktop.iso\n",
+			"cafef00d  ./noble-desktop.iso\n" +
+			"SHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = 28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f\n" +
+			"SHA256 (./Fedora-Cloud-Base-Generic-44-1.7.aarch64.qcow2) = 11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff\n",
 	)
 
 	cases := map[string]string{
-		"noble-server-cloudimg-amd64.img": "abc123def456",
-		"noble-server-cloudimg-arm64.img": "deadbeef00",
-		"noble-desktop.iso":               "cafef00d",
+		"noble-server-cloudimg-amd64.img":                "abc123def456",
+		"noble-server-cloudimg-arm64.img":                "deadbeef00",
+		"noble-desktop.iso":                              "cafef00d",
+		"Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2":  "28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f",
+		"Fedora-Cloud-Base-Generic-44-1.7.aarch64.qcow2": "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff",
 	}
 	for filename, want := range cases {
 		got, err := ParseSHA256Sums(doc, filename)

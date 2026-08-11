@@ -96,15 +96,35 @@ func FetchText(ctx context.Context, client *http.Client, url string) ([]byte, er
 	return io.ReadAll(resp.Body)
 }
 
-// ParseSHA256Sums parses a `sha256sum`-style checksum document (as
-// published alongside Ubuntu cloud images) and returns the lowercase hex
-// digest recorded for filename. Handles both "<hash>  <name>" and
-// "<hash> *<name>" forms, and tolerates a "./" prefix on the name.
+// ParseSHA256Sums parses a `sha256sum`-style or BSD-style (Fedora) checksum
+// document and returns the lowercase hex digest recorded for filename.
+// Handles both "<hash>  <name>", "<hash> *<name>", and "SHA256 (filename) = hash"
+// forms, and tolerates a "./" prefix on the name.
 func ParseSHA256Sums(data []byte, filename string) (string, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			continue
+		}
+
+		// Handle BSD/Fedora format: SHA256 (filename) = hash
+		if strings.HasPrefix(line, "SHA256 (") && strings.Contains(line, ") = ") {
+			idxOpen := strings.Index(line, "(")
+			idxClose := strings.LastIndex(line, ")")
+			idxEq := strings.LastIndex(line, "=")
+
+			if idxOpen != -1 && idxClose > idxOpen && idxEq > idxClose {
+				name := strings.TrimSpace(line[idxOpen+1 : idxClose])
+				hash := strings.TrimSpace(line[idxEq+1:])
+
+				name = strings.TrimPrefix(name, "./")
+
+				if name == filename {
+					return strings.ToLower(hash), nil
+				}
+			}
+
 			continue
 		}
 

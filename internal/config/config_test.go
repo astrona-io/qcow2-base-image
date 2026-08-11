@@ -65,6 +65,89 @@ func TestResolveBase(t *testing.T) {
 	}
 }
 
+func checkBaseResolve(t *testing.T, distro string, cfg DistroConfig, wantAMD map[string]string, wantARMImageURL string) {
+	t.Helper()
+
+	r, err := Resolve(cfg, filepath.Join("distros", distro), "", Options{
+		Distro: distro,
+		Arch:   "amd64",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	for k, w := range wantAMD {
+		var got string
+
+		switch k {
+		case "TemplateDir":
+			got = r.TemplateDir
+		case "ImageTag":
+			got = r.ImageTag
+		case "BaseDisk":
+			got = r.BaseDisk
+		case "FinalImageName":
+			got = r.FinalImageName
+		case "ImageURL":
+			got = r.ImageURL
+		}
+
+		if got != w {
+			t.Errorf("%s %s = %q, want %q", distro, k, got, w)
+		}
+	}
+
+	r2, err := Resolve(cfg, filepath.Join("distros", distro), "", Options{
+		Distro: distro,
+		Arch:   "arm64",
+	})
+	if err != nil {
+		t.Fatalf("Resolve ARM64: %v", err)
+	}
+
+	if r2.ImageURL != wantARMImageURL {
+		t.Errorf("%s ARM64 ImageURL = %q, want %q", distro, r2.ImageURL, wantARMImageURL)
+	}
+}
+
+func TestResolveFedoraBase(t *testing.T) {
+	cfg := DistroConfig{
+		OSVersion:        "44",
+		OSRelease:        "44",
+		ImageVariant:     "cloud",
+		ImageURLTemplate: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{.Release}}/Cloud/{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}/images/Fedora-Cloud-Base-Generic-{{.Release}}-1.7.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}.qcow2",
+	}
+
+	wantAMD := map[string]string{
+		"TemplateDir":    "distros/fedora",
+		"ImageTag":       "fedora-44-cloud",
+		"BaseDisk":       "build/base-fedora-amd64.qcow2",
+		"FinalImageName": "fedora-44-cloud-amd64.qcow2",
+		"ImageURL":       "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
+	}
+
+	checkBaseResolve(t, "fedora", cfg, wantAMD, "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-44-1.7.aarch64.qcow2")
+}
+
+func TestResolveOpenSUSEBase(t *testing.T) {
+	cfg := DistroConfig{
+		OSVersion:        "15.6",
+		OSRelease:        "15.6",
+		ImageVariant:     "nocloud",
+		ImageURLTemplate: "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_{{.Release}}/images/openSUSE-Leap-{{.Release}}.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}-NoCloud.qcow2",
+	}
+
+	wantAMD := map[string]string{
+		"TemplateDir":    "distros/opensuse",
+		"ImageTag":       "opensuse-15.6-nocloud",
+		"BaseDisk":       "build/base-opensuse-amd64.qcow2",
+		"FinalImageName": "opensuse-15.6-nocloud-amd64.qcow2",
+		"ImageURL":       "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_15.6/images/openSUSE-Leap-15.6.x86_64-NoCloud.qcow2",
+	}
+
+	checkBaseResolve(t, "opensuse", cfg, wantAMD, "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_15.6/images/openSUSE-Leap-15.6.aarch64-NoCloud.qcow2")
+}
+
 func TestResolveLayer(t *testing.T) {
 	cfg := ubuntuCfg()
 

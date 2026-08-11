@@ -1,0 +1,50 @@
+#cloud-config
+
+# Route all cloud-init logs directly to the main QEMU screen so the user sees the installation progress
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+# Print a big warning banner to the console before it starts
+bootcmd:
+  - [ sh, -c, 'clear > /dev/tty1' ]
+  - [ sh, -c, 'echo "\n========================================================" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING BASE PACKAGES" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  Please wait 3-5 minutes. The screen will scroll logs." > /dev/tty1' ]
+  - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
+  # Workaround for Fedora Bug 2411780 (cloud-init socket piping incompatibilities with nmap-ncat)
+  - [ sh, -c, 'sed -i "s/-W1//g" /usr/lib/systemd/system/cloud-*.service 2>/dev/null || true' ]
+  - [ sh, -c, 'sed -i "s/-W1//g" /lib/systemd/system/cloud-*.service 2>/dev/null || true' ]
+  - [ sh, -c, 'systemctl daemon-reload' ]
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: false
+    passwd: "$6$rounds=4096$saltsaltsaltsalt$8Dba93oEaZ16P0z3P8b4S0Ua697l0K3n.WqKqO6/Zq8I.8R/yL0bI1s1K1G1r3m3X9u3E4wEa6P8.T/4q9X6s." # password is 'ubuntu'
+    ssh_authorized_keys:
+      - ${SSH_KEY}
+
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: false
+
+ssh_pwauth: true
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - git
+  - vim-minimal
+  - htop
+  - qemu-guest-agent
+  - iproute
+
+runcmd:
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+  - systemctl mask systemd-networkd-wait-online.service
+  - echo "VM Cloud Base Template Ready" > /etc/motd
