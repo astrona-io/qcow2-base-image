@@ -165,7 +165,7 @@ func TestResolveOpenSUSEBase(t *testing.T) {
 func TestResolveLayer(t *testing.T) {
 	cfg := ubuntuCfg()
 
-	r, err := Resolve(cfg, "distros/ubuntu", "layers/docker", Options{
+	r, err := Resolve(cfg, "distros/ubuntu", "distros/ubuntu/layers/docker", Options{
 		Distro: "ubuntu",
 		Layer:  "docker",
 		Arch:   "arm64",
@@ -175,7 +175,7 @@ func TestResolveLayer(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"TemplateDir":      "layers/docker",
+		"TemplateDir":      "distros/ubuntu/layers/docker",
 		"ImageTag":         "ubuntu-24.04-desktop-docker",
 		"LayerBaseImage":   "build/ubuntu-24.04-desktop-arm64.qcow2",
 		"SourceDisk":       "build/ubuntu-24.04-desktop-arm64.qcow2",
@@ -209,7 +209,7 @@ func TestResolveLayer(t *testing.T) {
 func TestResolveLayerBaseImageOverrideChainsLayers(t *testing.T) {
 	cfg := ubuntuCfg()
 
-	r, err := Resolve(cfg, "distros/ubuntu", "layers/monitoring", Options{
+	r, err := Resolve(cfg, "distros/ubuntu", "distros/ubuntu/layers/monitoring", Options{
 		Distro:         "ubuntu",
 		Layer:          "monitoring",
 		Arch:           "arm64",

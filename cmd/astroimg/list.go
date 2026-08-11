@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -23,9 +24,10 @@ func init() {
 		},
 		&cobra.Command{
 			Use:   "layers",
-			Short: "List available LAYER values (layers/*)",
+			Short: "List available LAYER values (distros/<distro>/layers/*)",
 			RunE: func(_ *cobra.Command, _ []string) error {
-				return listDir(layersRoot)
+				distroLayersRoot := filepath.Join(distrosRoot, flagDistro, "layers")
+				return listDir(distroLayersRoot)
 			},
 		},
 	)
@@ -34,6 +36,10 @@ func init() {
 func listDir(root string) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
 		return err
 	}
 

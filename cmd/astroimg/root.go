@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -12,7 +13,6 @@ import (
 
 const (
 	distrosRoot = "distros"
-	layersRoot  = "layers"
 )
 
 var (
@@ -99,7 +99,9 @@ func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error
 		return config.Resolved{}, cfg, err
 	}
 
-	layerDir, err := config.ValidateLayerDir(layersRoot, flagLayer)
+	distroLayersRoot := filepath.Join(distrosRoot, flagDistro, "layers")
+
+	layerDir, err := config.ValidateLayerDir(distroLayersRoot, flagLayer)
 	if err != nil {
 		return config.Resolved{}, cfg, err
 	}
