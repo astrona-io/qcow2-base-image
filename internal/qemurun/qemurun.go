@@ -401,20 +401,3 @@ func GenerateSSHKey(ctx context.Context, path string) error {
 
 	return nil
 }
-
-// SysprepRemoteCommand is the fixed (no interpolated input) shell command
-// run on the guest to wipe cloud-init state, host SSH keys, and injected
-// authorized_keys, then clean up apt/log/tmp cruft and discard the freed
-// blocks (fstrim, paired with discard=unmap on the qemu drive -- see
-// BuildArgs) before the disk is sealed as a golden image. The cleanup
-// matters because `astroimg build` compresses the final image: freed-but-
-// still-allocated blocks compress far worse than blocks that were actually
-// discarded down to zero.
-const SysprepRemoteCommand = "sudo cloud-init clean --logs --machine-id && " +
-	"sudo rm -f /home/ubuntu/.ssh/authorized_keys && " +
-	"sudo rm -f /etc/ssh/ssh_host_* && " +
-	"if command -v apt-get >/dev/null; then sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*; elif command -v dnf >/dev/null; then sudo dnf clean all && sudo rm -rf /var/cache/dnf/*; elif command -v zypper >/dev/null; then sudo zypper clean -a; fi && " +
-	"sudo journalctl --vacuum-time=1s && " +
-	"sudo rm -rf /tmp/* /var/tmp/* && " +
-	"sudo fstrim -av && " +
-	"sudo sync && sudo poweroff"

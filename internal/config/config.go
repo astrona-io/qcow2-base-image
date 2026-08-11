@@ -17,6 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultSSHValue = "ubuntu"
+
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // ValidateName checks that a distro or layer name is safe to use as a path
@@ -33,11 +35,14 @@ func ValidateName(kind, name string) error {
 
 // DistroConfig is the schema of distros/<name>/distro.yaml.
 type DistroConfig struct {
-	OSVersion           string `yaml:"os_version"`
-	OSRelease           string `yaml:"os_release"`
-	ImageVariant        string `yaml:"image_variant"`
-	ImageURLTemplate    string `yaml:"image_url_template"`
-	ChecksumURLTemplate string `yaml:"checksum_url_template"`
+	OSVersion           string   `yaml:"os_version"`
+	OSRelease           string   `yaml:"os_release"`
+	ImageVariant        string   `yaml:"image_variant"`
+	ImageURLTemplate    string   `yaml:"image_url_template"`
+	ChecksumURLTemplate string   `yaml:"checksum_url_template"`
+	SSHUser             string   `yaml:"ssh_user"`
+	SSHPassword         string   `yaml:"ssh_password"`
+	SysprepCommands     []string `yaml:"sysprep_commands"`
 }
 
 // LoadDistro reads and validates distros/<distro>/distro.yaml under
@@ -66,6 +71,28 @@ func LoadDistro(distrosRoot, distro string) (DistroConfig, string, error) {
 
 	if cfg.OSVersion == "" || cfg.OSRelease == "" || cfg.ImageVariant == "" || cfg.ImageURLTemplate == "" {
 		return cfg, "", fmt.Errorf("%s: os_version, os_release, image_variant, image_url_template are required", path)
+	}
+
+	if cfg.SSHUser == "" {
+		cfg.SSHUser = defaultSSHValue
+	}
+
+	if cfg.SSHPassword == "" {
+		cfg.SSHPassword = defaultSSHValue
+	}
+
+	if len(cfg.SysprepCommands) == 0 {
+		cfg.SysprepCommands = []string{
+			"sudo cloud-init clean --logs --machine-id",
+			"sudo rm -f /home/" + cfg.SSHUser + "/.ssh/authorized_keys",
+			"sudo rm -f /etc/ssh/ssh_host_*",
+			"if command -v apt-get >/dev/null; then sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*; elif command -v dnf >/dev/null; then sudo dnf clean all && sudo rm -rf /var/cache/dnf/*; elif command -v zypper >/dev/null; then sudo zypper clean -a; fi",
+			"sudo journalctl --vacuum-time=1s",
+			"sudo rm -rf /tmp/* /var/tmp/*",
+			"sudo fstrim -av",
+			"sudo sync",
+			"sudo poweroff",
+		}
 	}
 
 	return cfg, dir, nil
@@ -151,6 +178,10 @@ type Resolved struct {
 
 	TestExtractDir string
 	TestImageName  string
+
+	SSHUser         string
+	SSHPassword     string
+	SysprepCommands []string
 }
 
 // Resolve computes every derived path/name for one distro+layer+arch build.
@@ -162,11 +193,14 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 	}
 
 	r := Resolved{
-		Distro:    opts.Distro,
-		Layer:     opts.Layer,
-		Arch:      opts.Arch,
-		BuildDir:  buildDir,
-		OSRelease: cfg.OSRelease,
+		Distro:          opts.Distro,
+		Layer:           opts.Layer,
+		Arch:            opts.Arch,
+		BuildDir:        buildDir,
+		OSRelease:       cfg.OSRelease,
+		SSHUser:         cfg.SSHUser,
+		SSHPassword:     cfg.SSHPassword,
+		SysprepCommands: cfg.SysprepCommands,
 	}
 
 	imageURL, err := renderTemplate("image_url_template", cfg.ImageURLTemplate, cfg, opts.Arch)

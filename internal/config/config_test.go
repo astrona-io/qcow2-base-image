@@ -12,6 +12,8 @@ func ubuntuCfg() DistroConfig {
 		OSRelease:        "noble",
 		ImageVariant:     "desktop",
 		ImageURLTemplate: "https://cloud-images.ubuntu.com/{{.Release}}/current/{{.Release}}-server-cloudimg-{{.Arch}}.img",
+		SSHUser:          "ubuntu",
+		SSHPassword:      "ubuntu",
 	}
 }
 
@@ -97,6 +99,14 @@ func checkBaseResolve(t *testing.T, distro string, cfg DistroConfig, wantAMD map
 		}
 	}
 
+	if r.SSHUser != cfg.SSHUser {
+		t.Errorf("%s SSHUser = %q, want %q", distro, r.SSHUser, cfg.SSHUser)
+	}
+
+	if r.SSHPassword != cfg.SSHPassword {
+		t.Errorf("%s SSHPassword = %q, want %q", distro, r.SSHPassword, cfg.SSHPassword)
+	}
+
 	r2, err := Resolve(cfg, filepath.Join("distros", distro), "", Options{
 		Distro: distro,
 		Arch:   "arm64",
@@ -116,6 +126,8 @@ func TestResolveFedoraBase(t *testing.T) {
 		OSRelease:        "44",
 		ImageVariant:     "cloud",
 		ImageURLTemplate: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{.Release}}/Cloud/{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}/images/Fedora-Cloud-Base-Generic-{{.Release}}-1.7.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}.qcow2",
+		SSHUser:          "fedora",
+		SSHPassword:      "fedora",
 	}
 
 	wantAMD := map[string]string{
@@ -135,6 +147,8 @@ func TestResolveOpenSUSEBase(t *testing.T) {
 		OSRelease:        "15.6",
 		ImageVariant:     "nocloud",
 		ImageURLTemplate: "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_{{.Release}}/images/openSUSE-Leap-{{.Release}}.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}-NoCloud.qcow2",
+		SSHUser:          "opensuse",
+		SSHPassword:      "opensuse",
 	}
 
 	wantAMD := map[string]string{

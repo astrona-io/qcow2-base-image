@@ -1,6 +1,8 @@
 os_version: "44"
 os_release: "44"
 image_variant: cloud
+ssh_user: "fedora"
+ssh_password: "fedora"
 
 image_url_template: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{.Release}}/Cloud/{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}/images/Fedora-Cloud-Base-Generic-{{.Release}}-1.7.{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}.qcow2"
 checksum_url_template: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{.Release}}/Cloud/{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}/images/Fedora-Cloud-{{.Release}}-1.7-{{if eq .Arch \"amd64\"}}x86_64{{else}}aarch64{{end}}-CHECKSUM"

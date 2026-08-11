@@ -17,17 +17,19 @@ import (
 	"github.com/astrona-io/qcow2-base-image/internal/qemurun"
 )
 
-// testBootUserData is a minimal cloud-config for booting an already-built,
+// buildTestBootUserData returns a minimal cloud-config for booting an already-built,
 // already-sysprepped artifact: no packages, no runcmd, just re-inject an
 // SSH key (sysprep wiped the old one) so the fork is reachable. Reusing
-// the "ubuntu" user cloud-init already created is enough -- the software
+// the user cloud-init already created is enough -- the software
 // is already installed, this is a boot verification, not a provisioning run.
-const testBootUserData = `#cloud-config
+func buildTestBootUserData(sshUser string) string {
+	return fmt.Sprintf(`#cloud-config
 users:
-  - name: ubuntu
+  - name: %s
     ssh_authorized_keys:
       - ${SSH_KEY}
-`
+`, sshUser)
+}
 
 const testBootMetaData = `instance-id: placeholder
 local-hostname: test-boot
@@ -55,7 +57,7 @@ artifact -> base artifact.`,
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		fork, err := newTestFork(cmd.Context(), r.BuildDir, artifactPath, r.Arch, flagSSHPort, headless, flagVerbose)
+		fork, err := newTestFork(cmd.Context(), r.BuildDir, artifactPath, r.Arch, flagSSHPort, headless, flagVerbose, r.SSHUser)
 		if err != nil {
 			return err
 		}
@@ -75,6 +77,7 @@ type testFork struct {
 	forkPath, isoPath, varsPath, serialLogPath string
 	keyPath, knownHostsFile                    string
 	sshPort                                    int
+	sshUser                                    string
 	qemuCmd                                    *exec.Cmd
 }
 
@@ -103,7 +106,7 @@ func (f *testFork) cleanup() {
 // newTestFork forks artifactPath into a throwaway overlay under buildDir,
 // attaches a minimal SSH-only cloud-init seed, boots it, and waits for its
 // SSH host key. The caller must call fork.cleanup() when done.
-func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPort int, headless, verbose bool) (*testFork, error) {
+func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPort int, headless, verbose bool, sshUser string) (*testFork, error) {
 	qcfg, err := platform.DetectForHost(arch)
 	if err != nil {
 		return nil, err
@@ -119,6 +122,7 @@ func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPo
 		keyPath:        filepath.Join(buildDir, "id_ed25519"),
 		knownHostsFile: filepath.Join(buildDir, "known_hosts"),
 		sshPort:        sshPort,
+		sshUser:        sshUser,
 	}
 
 	if err := createOverlayDisk(ctx, artifactPath, fork.forkPath); err != nil {
@@ -137,7 +141,7 @@ func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPo
 		return nil, err
 	}
 
-	userData := cloudinit.Substitute(testBootUserData, map[string]string{"SSH_KEY": strings.TrimSpace(string(pub))})
+	userData := cloudinit.Substitute(buildTestBootUserData(sshUser), map[string]string{"SSH_KEY": strings.TrimSpace(string(pub))})
 
 	instanceID := cloudinit.GenerateInstanceID("test-boot", time.Now)
 
@@ -197,7 +201,7 @@ func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPo
 		return nil, fmt.Errorf("fork never came up: %w", err)
 	}
 
-	fmt.Printf("SSH: ssh -i %s -p %d -o UserKnownHostsFile=%s ubuntu@localhost\n", fork.keyPath, sshPort, fork.knownHostsFile)
+	fmt.Printf("SSH: ssh -i %s -p %d -o UserKnownHostsFile=%s %s@localhost\n", fork.keyPath, sshPort, fork.knownHostsFile, fork.sshUser)
 
 	return fork, nil
 }
@@ -205,7 +209,7 @@ func newTestFork(ctx context.Context, buildDir, artifactPath, arch string, sshPo
 // verifySSH confirms the fork is actually reachable and accepting logins
 // over SSH, not just that its port is open.
 func (f *testFork) verifySSH(ctx context.Context) error {
-	if _, err := qemurun.RunSSH(ctx, f.keyPath, f.knownHostsFile, f.sshPort, "ubuntu", "localhost", "true"); err != nil {
+	if _, err := qemurun.RunSSH(ctx, f.keyPath, f.knownHostsFile, f.sshPort, f.sshUser, "localhost", "true"); err != nil {
 		return fmt.Errorf("SSH login to fork failed: %w", err)
 	}
 

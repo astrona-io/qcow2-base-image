@@ -62,13 +62,13 @@ func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHost
 
 	fmt.Println("waiting for cloud-init to finish provisioning (this can take 5-10+ min)...")
 
-	if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, "ubuntu", "localhost", 30*time.Minute); err != nil {
+	if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, r.SSHUser, "localhost", 30*time.Minute); err != nil {
 		return fmt.Errorf("waiting for cloud-init: %w", err)
 	}
 
 	fmt.Println("cloud-init finished provisioning, sealing the image...")
 
-	if err := doSysprep(ctx, r.BuildDir, flagSSHPort); err != nil {
+	if err := doSysprep(ctx, r, flagSSHPort); err != nil {
 		return fmt.Errorf("sysprep: %w", err)
 	}
 
@@ -147,10 +147,10 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 	fmt.Printf("launching %s %s VM with %s (headless=%v)\n", r.Arch, r.ImageTag, qcfg.Binary, headless)
 
 	if !headless {
-		fmt.Println("Username: ubuntu | Password: ubuntu")
+		fmt.Printf("Username: %s | Password: %s\n", r.SSHUser, r.SSHPassword)
 	}
 
-	fmt.Printf("SSH: ssh -i %s -p %d -o UserKnownHostsFile=%s ubuntu@localhost\n", keyPath, sshPort, knownHostsFile)
+	fmt.Printf("SSH: ssh -i %s -p %d -o UserKnownHostsFile=%s %s@localhost\n", keyPath, sshPort, knownHostsFile, r.SSHUser)
 
 	cmd, err := qemurun.Start(ctx, qcfg.Binary, args)
 	if err != nil {
