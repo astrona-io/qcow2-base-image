@@ -19,7 +19,8 @@ Icon
 .com.apple.timemachine.donotpresent
 
 # Custom list
-build/*
+build/
+.runtime/*
 
 # Caveman mode rule files (local preference, not for team repo)
 .cursor/

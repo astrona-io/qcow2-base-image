@@ -57,7 +57,7 @@ artifact -> base artifact.`,
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		fork, err := newTestFork(cmd.Context(), r.BuildDir, artifactPath, r.Arch, flagSSHPort, headless, flagVerbose, r.SSHUser)
+		fork, err := newTestFork(cmd.Context(), r.RuntimeDir, artifactPath, r.Arch, flagSSHPort, headless, flagVerbose, r.SSHUser)
 		if err != nil {
 			return err
 		}

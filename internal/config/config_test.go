@@ -34,14 +34,14 @@ func TestResolveBase(t *testing.T) {
 	want := map[string]string{
 		"TemplateDir":      "distros/ubuntu",
 		"ImageTag":         "ubuntu-24.04-server",
-		"BaseDisk":         "build/base-ubuntu-arm64.qcow2",
-		"SourceDisk":       "build/base-ubuntu-arm64.qcow2",
+		"BaseDisk":         ".runtime/base-ubuntu-arm64.qcow2",
+		"SourceDisk":       ".runtime/base-ubuntu-arm64.qcow2",
 		"FinalImageName":   "ubuntu-24.04-server-arm64.qcow2",
-		"InstanceDisk":     "build/instance-ubuntu-24.04-server-arm64.qcow2",
-		"CloudInitISO":     "build/ubuntu-24.04-server-cloud-init.iso",
-		"UserData":         "build/ubuntu-24.04-server-user-data",
-		"MetaData":         "build/ubuntu-24.04-server-meta-data",
-		"DownloadedImg":    "build/noble-server-cloudimg-arm64.img",
+		"InstanceDisk":     ".runtime/instance-ubuntu-24.04-server-arm64.qcow2",
+		"CloudInitISO":     ".runtime/ubuntu-24.04-server-cloud-init.iso",
+		"UserData":         ".runtime/ubuntu-24.04-server-user-data",
+		"MetaData":         ".runtime/ubuntu-24.04-server-meta-data",
+		"DownloadedImg":    ".runtime/noble-server-cloudimg-arm64.img",
 		"ImageURL":         "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img",
 		"InstanceIDPrefix": "ubuntu-24.04-base",
 	}
@@ -133,7 +133,7 @@ func TestResolveFedoraBase(t *testing.T) {
 	wantAMD := map[string]string{
 		"TemplateDir":    "distros/fedora",
 		"ImageTag":       "fedora-44-cloud",
-		"BaseDisk":       "build/base-fedora-amd64.qcow2",
+		"BaseDisk":       ".runtime/base-fedora-amd64.qcow2",
 		"FinalImageName": "fedora-44-cloud-amd64.qcow2",
 		"ImageURL":       "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
 	}
@@ -154,7 +154,7 @@ func TestResolveOpenSUSEBase(t *testing.T) {
 	wantAMD := map[string]string{
 		"TemplateDir":    "distros/opensuse",
 		"ImageTag":       "opensuse-15.6-nocloud",
-		"BaseDisk":       "build/base-opensuse-amd64.qcow2",
+		"BaseDisk":       ".runtime/base-opensuse-amd64.qcow2",
 		"FinalImageName": "opensuse-15.6-nocloud-amd64.qcow2",
 		"ImageURL":       "https://download.opensuse.org/repositories/Cloud:/Images:/Leap_15.6/images/openSUSE-Leap-15.6.x86_64-NoCloud.qcow2",
 	}
@@ -180,10 +180,10 @@ func TestResolveLayer(t *testing.T) {
 		"LayerBaseImage":   "build/ubuntu-24.04-server-arm64.qcow2",
 		"SourceDisk":       "build/ubuntu-24.04-server-arm64.qcow2",
 		"FinalImageName":   "ubuntu-24.04-server-docker-arm64.qcow2",
-		"InstanceDisk":     "build/overlay-ubuntu-24.04-server-docker-arm64.qcow2",
-		"CloudInitISO":     "build/ubuntu-24.04-server-docker-cloud-init.iso",
-		"UserData":         "build/ubuntu-24.04-server-docker-user-data",
-		"MetaData":         "build/ubuntu-24.04-server-docker-meta-data",
+		"InstanceDisk":     ".runtime/overlay-ubuntu-24.04-server-docker-arm64.qcow2",
+		"CloudInitISO":     ".runtime/ubuntu-24.04-server-docker-cloud-init.iso",
+		"UserData":         ".runtime/ubuntu-24.04-server-docker-user-data",
+		"MetaData":         ".runtime/ubuntu-24.04-server-docker-meta-data",
 		"InstanceIDPrefix": "ubuntu-24.04-docker",
 	}
 

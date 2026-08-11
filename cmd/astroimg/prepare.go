@@ -31,11 +31,11 @@ var prepareCmd = &cobra.Command{
 }
 
 func doPrepare(ctx context.Context, r config.Resolved) error {
-	if err := os.MkdirAll(r.BuildDir, 0o750); err != nil {
-		return fmt.Errorf("creating %s: %w", r.BuildDir, err)
+	if err := os.MkdirAll(r.RuntimeDir, 0o750); err != nil {
+		return fmt.Errorf("creating %s: %w", r.RuntimeDir, err)
 	}
 
-	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
+	keyPath := filepath.Join(r.RuntimeDir, "id_ed25519")
 	if err := qemurun.GenerateSSHKey(ctx, keyPath); err != nil {
 		return fmt.Errorf("generating SSH key: %w", err)
 	}

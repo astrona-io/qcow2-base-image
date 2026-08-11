@@ -139,10 +139,11 @@ func ensureUnder(root, path string) error {
 // Options are the per-invocation inputs that, together with a DistroConfig,
 // fully determine every derived path and name in the pipeline.
 type Options struct {
-	Distro   string
-	Layer    string
-	Arch     string
-	BuildDir string // defaults to "build" when empty
+	Distro     string
+	Layer      string
+	Arch       string
+	BuildDir   string // defaults to "build" when empty
+	RuntimeDir string // defaults to ".runtime" when empty
 
 	// LayerBaseImage overrides the source disk a layer boots from. When
 	// empty, it defaults to this distro's finished non-layer final image,
@@ -154,7 +155,7 @@ type Options struct {
 // Resolved holds every derived path/name the pipeline needs for one
 // distro+layer+arch build.
 type Resolved struct {
-	Distro, Layer, Arch, BuildDir string
+	Distro, Layer, Arch, BuildDir, RuntimeDir string
 
 	TemplateDir      string
 	ImageTag         string
@@ -192,11 +193,17 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 		buildDir = "build"
 	}
 
+	runtimeDir := opts.RuntimeDir
+	if runtimeDir == "" {
+		runtimeDir = ".runtime"
+	}
+
 	r := Resolved{
 		Distro:          opts.Distro,
 		Layer:           opts.Layer,
 		Arch:            opts.Arch,
 		BuildDir:        buildDir,
+		RuntimeDir:      runtimeDir,
 		OSRelease:       cfg.OSRelease,
 		SSHUser:         cfg.SSHUser,
 		SSHPassword:     cfg.SSHPassword,
@@ -220,8 +227,8 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 	}
 
 	baseImageTag := fmt.Sprintf("%s-%s-%s", opts.Distro, cfg.OSVersion, cfg.ImageVariant)
-	r.BaseDisk = filepath.Join(buildDir, fmt.Sprintf("base-%s-%s.qcow2", opts.Distro, opts.Arch))
-	r.DownloadedImg = filepath.Join(buildDir, fmt.Sprintf("%s-server-cloudimg-%s.img", cfg.OSRelease, opts.Arch))
+	r.BaseDisk = filepath.Join(runtimeDir, fmt.Sprintf("base-%s-%s.qcow2", opts.Distro, opts.Arch))
+	r.DownloadedImg = filepath.Join(runtimeDir, fmt.Sprintf("%s-server-cloudimg-%s.img", cfg.OSRelease, opts.Arch))
 
 	defaultLayerBaseImage := filepath.Join(buildDir, fmt.Sprintf("%s-%s.qcow2", baseImageTag, opts.Arch))
 
@@ -251,12 +258,12 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 	}
 
 	r.FinalImageName = fmt.Sprintf("%s-%s.qcow2", r.ImageTag, opts.Arch)
-	r.InstanceDisk = filepath.Join(buildDir, fmt.Sprintf("%s-%s-%s.qcow2", instancePrefix, r.ImageTag, opts.Arch))
-	r.VarsFile = filepath.Join(buildDir, fmt.Sprintf("vars-%s.fd", opts.Arch))
-	r.CloudInitISO = filepath.Join(buildDir, r.ImageTag+"-cloud-init.iso")
-	r.UserData = filepath.Join(buildDir, r.ImageTag+"-user-data")
-	r.MetaData = filepath.Join(buildDir, r.ImageTag+"-meta-data")
-	r.TestExtractDir = filepath.Join(buildDir, "test-extract")
+	r.InstanceDisk = filepath.Join(runtimeDir, fmt.Sprintf("%s-%s-%s.qcow2", instancePrefix, r.ImageTag, opts.Arch))
+	r.VarsFile = filepath.Join(runtimeDir, fmt.Sprintf("vars-%s.fd", opts.Arch))
+	r.CloudInitISO = filepath.Join(runtimeDir, r.ImageTag+"-cloud-init.iso")
+	r.UserData = filepath.Join(runtimeDir, r.ImageTag+"-user-data")
+	r.MetaData = filepath.Join(runtimeDir, r.ImageTag+"-meta-data")
+	r.TestExtractDir = filepath.Join(runtimeDir, "test-extract")
 	r.TestImageName = filepath.Join(r.TestExtractDir, r.FinalImageName)
 
 	return r, nil

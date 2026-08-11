@@ -64,7 +64,7 @@ one) -- exactly what a real downstream consumer has to do.`,
 
 		fmt.Println("boot-testing pulled artifact...")
 
-		fork, err := newTestFork(ctx, r.BuildDir, r.TestImageName, r.Arch, flagSSHPort, true, flagVerbose, r.SSHUser)
+		fork, err := newTestFork(ctx, r.RuntimeDir, r.TestImageName, r.Arch, flagSSHPort, true, flagVerbose, r.SSHUser)
 		if err != nil {
 			return fmt.Errorf("pulled artifact failed to boot: %w", err)
 		}

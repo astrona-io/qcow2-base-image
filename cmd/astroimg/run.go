@@ -63,7 +63,7 @@ func init() {
 // for the guest to power off -- the automated "finish building" tail shared
 // by `pipeline` and `run --seal`.
 func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHostsFile string) error {
-	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
+	keyPath := filepath.Join(r.RuntimeDir, "id_ed25519")
 
 	fmt.Println("waiting for cloud-init to finish provisioning (this can take 5-10+ min)...")
 
@@ -80,7 +80,7 @@ func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHost
 	fmt.Println("waiting for the VM to power off...")
 
 	if err := waitForShutdown(qemuCmd, 2*time.Minute); err != nil {
-		return fmt.Errorf("%w -- check %s", err, filepath.Join(r.BuildDir, r.ImageTag+"-console.log"))
+		return fmt.Errorf("%w -- check %s", err, filepath.Join(r.RuntimeDir, r.ImageTag+"-console.log"))
 	}
 
 	return nil
@@ -156,7 +156,7 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		return nil, "", err
 	}
 
-	knownHostsFile := filepath.Join(r.BuildDir, "known_hosts")
+	knownHostsFile := filepath.Join(r.RuntimeDir, "known_hosts")
 	hostPort := fmt.Sprintf("[localhost]:%d", sshPort)
 
 	if !dryRun {
@@ -170,7 +170,7 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		VarsFile:      r.VarsFile,
 		SSHPort:       sshPort,
 		Headless:      headless,
-		SerialLogPath: filepath.Join(r.BuildDir, r.ImageTag+"-console.log"),
+		SerialLogPath: filepath.Join(r.RuntimeDir, r.ImageTag+"-console.log"),
 	}
 
 	if !dryRun {
@@ -189,7 +189,7 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		return nil, "", nil
 	}
 
-	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
+	keyPath := filepath.Join(r.RuntimeDir, "id_ed25519")
 	fmt.Printf("launching %s %s VM with %s (headless=%v)\n", r.Arch, r.ImageTag, qcfg.Binary, headless)
 
 	if !headless {

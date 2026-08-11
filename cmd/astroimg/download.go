@@ -32,8 +32,8 @@ func doDownload(ctx context.Context, r config.Resolved) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(r.BuildDir, 0o750); err != nil {
-		return fmt.Errorf("creating %s: %w", r.BuildDir, err)
+	if err := os.MkdirAll(r.RuntimeDir, 0o750); err != nil {
+		return fmt.Errorf("creating %s: %w", r.RuntimeDir, err)
 	}
 
 	if _, err := os.Stat(r.DownloadedImg); errors.Is(err, os.ErrNotExist) {

@@ -35,6 +35,10 @@ func doBuild(ctx context.Context, r config.Resolved, flatten bool) error {
 		return fmt.Errorf("%s not found, you must run the VM first", r.InstanceDisk)
 	}
 
+	if err := os.MkdirAll(r.BuildDir, 0o750); err != nil {
+		return fmt.Errorf("creating %s: %w", r.BuildDir, err)
+	}
+
 	finalPath := filepath.Join(r.BuildDir, r.FinalImageName)
 
 	args := []string{"convert", "-O", "qcow2", "-c"}

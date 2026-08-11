@@ -26,8 +26,8 @@ var sysprepCmd = &cobra.Command{
 }
 
 func doSysprep(ctx context.Context, r config.Resolved, sshPort int) error {
-	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
-	knownHostsFile := filepath.Join(r.BuildDir, "known_hosts")
+	keyPath := filepath.Join(r.RuntimeDir, "id_ed25519")
+	knownHostsFile := filepath.Join(r.RuntimeDir, "known_hosts")
 
 	fmt.Println("connecting to VM to wipe cloud-init state, SSH host keys, and authorized_keys...")
 

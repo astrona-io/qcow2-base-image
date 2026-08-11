@@ -20,6 +20,7 @@ var (
 	flagLayer          string
 	flagArch           string
 	flagBuildDir       string
+	flagRuntimeDir     string
 	flagLayerBaseImage string
 	flagSSHPort        int
 	flagRegistry       string
@@ -40,7 +41,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDistro, "distro", "ubuntu", "distro to build (see distros/)")
 	rootCmd.PersistentFlags().StringVar(&flagLayer, "layer", "", "optional layer to build on top of a finished base image (see layers/)")
 	rootCmd.PersistentFlags().StringVar(&flagArch, "arch", defaultArch(), "target architecture: arm64 or amd64")
-	rootCmd.PersistentFlags().StringVar(&flagBuildDir, "build-dir", "build", "directory for downloaded/generated build artifacts")
+	rootCmd.PersistentFlags().StringVar(&flagBuildDir, "build-dir", "build", "directory for final generated build artifacts")
+	rootCmd.PersistentFlags().StringVar(&flagRuntimeDir, "runtime-dir", ".runtime", "directory for intermediate downloads and temporary runtime files")
 	rootCmd.PersistentFlags().StringVar(&flagLayerBaseImage, "layer-base-image", "", "override the base image a layer boots from (default: this distro's finished non-layer image)")
 	rootCmd.PersistentFlags().IntVar(&flagSSHPort, "ssh-port", 2222, "host port forwarded to the guest's SSH port")
 	rootCmd.PersistentFlags().StringVar(&flagRegistry, "registry", "ghcr.io", "OCI registry for push/test-oci")
@@ -117,6 +119,7 @@ func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error
 		Layer:          flagLayer,
 		Arch:           flagArch,
 		BuildDir:       flagBuildDir,
+		RuntimeDir:     flagRuntimeDir,
 		LayerBaseImage: flagLayerBaseImage,
 	}
 
