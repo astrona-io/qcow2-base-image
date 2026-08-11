@@ -1,6 +1,6 @@
 os_version: "24.04"
 os_release: noble
-image_variant: desktop
+image_variant: server
 
 image_url_template: "https://cloud-images.ubuntu.com/{{.Release}}/current/{{.Release}}-server-cloudimg-{{.Arch}}.img"
 checksum_url_template: "https://cloud-images.ubuntu.com/{{.Release}}/current/SHA256SUMS"

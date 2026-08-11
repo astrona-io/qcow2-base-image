@@ -1,0 +1,35 @@
+#cloud-config
+
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+bootcmd:
+  - [ sh, -c, 'clear > /dev/tty1' ]
+  - [ sh, -c, 'echo "\n========================================================" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  INSTALLING MINIMAL DESKTOP ENVIRONMENT" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  Please wait 5-10 minutes. The screen will scroll logs." > /dev/tty1' ]
+  - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
+
+users:
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${SSH_KEY}
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ubuntu-desktop-minimal
+
+write_files:
+  - path: /etc/gdm3/custom.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=ubuntu
+
+runcmd:
+  - systemctl enable gdm3
+  - echo "VM Minimal Desktop Layer Ready" > /etc/motd

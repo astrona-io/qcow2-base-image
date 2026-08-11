@@ -8,8 +8,8 @@ output:
 bootcmd:
   - [ sh, -c, 'clear > /dev/tty1' ]
   - [ sh, -c, 'echo "\n========================================================" > /dev/tty1' ]
-  - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING DESKTOP ENVIRONMENT" > /dev/tty1' ]
-  - [ sh, -c, 'echo "  Please wait 5-10 minutes. The screen will scroll logs." > /dev/tty1' ]
+  - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING BASE SERVER PACKAGES" > /dev/tty1' ]
+  - [ sh, -c, 'echo "  Please wait 2-3 minutes. The screen will scroll logs." > /dev/tty1' ]
   - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
 
 users:
@@ -32,7 +32,6 @@ package_update: true
 package_upgrade: true
 
 packages:
-  - ubuntu-desktop-minimal
   - curl
   - git
   - vim
@@ -40,19 +39,9 @@ packages:
   - qemu-guest-agent
   - iproute2
 
-write_files:
-  - path: /etc/gdm3/custom.conf
-    owner: root:root
-    permissions: '0644'
-    content: |
-      [daemon]
-      AutomaticLoginEnable=true
-      AutomaticLogin=ubuntu
-
 runcmd:
   - systemctl enable qemu-guest-agent
   - systemctl start qemu-guest-agent
-  - systemctl enable gdm3
   # QEMU's user-mode networking never provides IPv6 router advertisements,
   # so systemd-networkd-wait-online.service (which by default waits for
   # dual-stack "routable" state) burns its own ~90-120s internal timeout on
@@ -62,7 +51,7 @@ runcmd:
   # top of it), since SSH/cloud-init's own network handling doesn't
   # actually need it.
   - systemctl mask systemd-networkd-wait-online.service
-  - echo "VM Desktop Base Template Ready" > /etc/motd
+  - echo "VM Server Base Template Ready" > /etc/motd
 
 # No power_state reboot here on purpose: `astroimg pipeline` runs sysprep
 # automatically the instant `cloud-init status --wait` returns, over SSH to

@@ -10,7 +10,7 @@ func ubuntuCfg() DistroConfig {
 	return DistroConfig{
 		OSVersion:        "24.04",
 		OSRelease:        "noble",
-		ImageVariant:     "desktop",
+		ImageVariant:     "server",
 		ImageURLTemplate: "https://cloud-images.ubuntu.com/{{.Release}}/current/{{.Release}}-server-cloudimg-{{.Arch}}.img",
 		SSHUser:          "ubuntu",
 		SSHPassword:      "ubuntu",
@@ -33,14 +33,14 @@ func TestResolveBase(t *testing.T) {
 
 	want := map[string]string{
 		"TemplateDir":      "distros/ubuntu",
-		"ImageTag":         "ubuntu-24.04-desktop",
+		"ImageTag":         "ubuntu-24.04-server",
 		"BaseDisk":         "build/base-ubuntu-arm64.qcow2",
 		"SourceDisk":       "build/base-ubuntu-arm64.qcow2",
-		"FinalImageName":   "ubuntu-24.04-desktop-arm64.qcow2",
-		"InstanceDisk":     "build/instance-ubuntu-24.04-desktop-arm64.qcow2",
-		"CloudInitISO":     "build/ubuntu-24.04-desktop-cloud-init.iso",
-		"UserData":         "build/ubuntu-24.04-desktop-user-data",
-		"MetaData":         "build/ubuntu-24.04-desktop-meta-data",
+		"FinalImageName":   "ubuntu-24.04-server-arm64.qcow2",
+		"InstanceDisk":     "build/instance-ubuntu-24.04-server-arm64.qcow2",
+		"CloudInitISO":     "build/ubuntu-24.04-server-cloud-init.iso",
+		"UserData":         "build/ubuntu-24.04-server-user-data",
+		"MetaData":         "build/ubuntu-24.04-server-meta-data",
 		"DownloadedImg":    "build/noble-server-cloudimg-arm64.img",
 		"ImageURL":         "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img",
 		"InstanceIDPrefix": "ubuntu-24.04-base",
@@ -176,14 +176,14 @@ func TestResolveLayer(t *testing.T) {
 
 	want := map[string]string{
 		"TemplateDir":      "distros/ubuntu/layers/docker",
-		"ImageTag":         "ubuntu-24.04-desktop-docker",
-		"LayerBaseImage":   "build/ubuntu-24.04-desktop-arm64.qcow2",
-		"SourceDisk":       "build/ubuntu-24.04-desktop-arm64.qcow2",
-		"FinalImageName":   "ubuntu-24.04-desktop-docker-arm64.qcow2",
-		"InstanceDisk":     "build/overlay-ubuntu-24.04-desktop-docker-arm64.qcow2",
-		"CloudInitISO":     "build/ubuntu-24.04-desktop-docker-cloud-init.iso",
-		"UserData":         "build/ubuntu-24.04-desktop-docker-user-data",
-		"MetaData":         "build/ubuntu-24.04-desktop-docker-meta-data",
+		"ImageTag":         "ubuntu-24.04-server-docker",
+		"LayerBaseImage":   "build/ubuntu-24.04-server-arm64.qcow2",
+		"SourceDisk":       "build/ubuntu-24.04-server-arm64.qcow2",
+		"FinalImageName":   "ubuntu-24.04-server-docker-arm64.qcow2",
+		"InstanceDisk":     "build/overlay-ubuntu-24.04-server-docker-arm64.qcow2",
+		"CloudInitISO":     "build/ubuntu-24.04-server-docker-cloud-init.iso",
+		"UserData":         "build/ubuntu-24.04-server-docker-user-data",
+		"MetaData":         "build/ubuntu-24.04-server-docker-meta-data",
 		"InstanceIDPrefix": "ubuntu-24.04-docker",
 	}
 
@@ -213,13 +213,13 @@ func TestResolveLayerBaseImageOverrideChainsLayers(t *testing.T) {
 		Distro:         "ubuntu",
 		Layer:          "monitoring",
 		Arch:           "arm64",
-		LayerBaseImage: "build/ubuntu-24.04-desktop-docker-arm64.qcow2",
+		LayerBaseImage: "build/ubuntu-24.04-server-docker-arm64.qcow2",
 	})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	if r.SourceDisk != "build/ubuntu-24.04-desktop-docker-arm64.qcow2" {
+	if r.SourceDisk != "build/ubuntu-24.04-server-docker-arm64.qcow2" {
 		t.Errorf("SourceDisk = %q, want chained override", r.SourceDisk)
 	}
 }
