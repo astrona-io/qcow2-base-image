@@ -26,6 +26,7 @@ var (
 	flagGHUser         string
 	flagVerbose        bool
 	flagFlatten        bool
+	flagDryRun         bool
 )
 
 var rootCmd = &cobra.Command{
@@ -46,6 +47,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagGHUser, "gh-user", "", "registry namespace/org for push/test-oci (default: this repo's GitHub org from 'git remote origin', then 'gh' CLI login)")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
+	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "print the QEMU command and exit without starting the VM")
 	rootCmd.PersistentFlags().Bool("headless", false, "run QEMU without a GUI window (default: auto-detect via $CI / host OS)")
 
 	rootCmd.AddCommand(

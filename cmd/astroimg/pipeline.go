@@ -25,23 +25,29 @@ finalizes the artifact. This is the single command CI calls.`,
 
 		fmt.Printf("=== pipeline: distro=%s layer=%q arch=%s ===\n", r.Distro, r.Layer, r.Arch)
 
-		if err := doPrepare(ctx, r); err != nil {
-			return fmt.Errorf("prepare: %w", err)
-		}
+		if !flagDryRun {
+			if err := doPrepare(ctx, r); err != nil {
+				return fmt.Errorf("prepare: %w", err)
+			}
 
-		if err := doDownload(ctx, r); err != nil {
-			return fmt.Errorf("download: %w", err)
-		}
+			if err := doDownload(ctx, r); err != nil {
+				return fmt.Errorf("download: %w", err)
+			}
 
-		if err := doISO(r); err != nil {
-			return fmt.Errorf("iso: %w", err)
+			if err := doISO(r); err != nil {
+				return fmt.Errorf("iso: %w", err)
+			}
 		}
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose)
+		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose, flagDryRun)
 		if err != nil {
 			return fmt.Errorf("run: %w", err)
+		}
+
+		if flagDryRun {
+			return nil
 		}
 
 		if err := sealVM(ctx, r, qemuCmd, knownHostsFile); err != nil {

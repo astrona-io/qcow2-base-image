@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,9 +30,13 @@ var runCmd = &cobra.Command{
 
 		headless := platform.Headless(headlessOverride(cmd))
 
-		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose)
+		qemuCmd, knownHostsFile, err := startVM(ctx, r, headless, flagSSHPort, flagVerbose, flagDryRun)
 		if err != nil {
 			return err
+		}
+
+		if flagDryRun {
+			return nil
 		}
 
 		seal, _ := cmd.Flags().GetBool("seal")
@@ -106,6 +111,28 @@ func waitForShutdown(qemuCmd *exec.Cmd, maxWait time.Duration) error {
 	}
 }
 
+func printDryRun(binary string, args []string) {
+	fmt.Printf("DRY RUN:\n\n%s \\\n", binary)
+
+	for i, arg := range args {
+		// Basic escaping for arguments with spaces (like -smp, or paths)
+		if strings.Contains(arg, " ") {
+			arg = fmt.Sprintf("%q", arg)
+		}
+
+		switch {
+		case i == len(args)-1:
+			fmt.Printf("    %s\n\n", arg)
+		case strings.HasPrefix(args[i+1], "-"):
+			// The next arg is a flag, so close the current line
+			fmt.Printf("    %s \\\n", arg)
+		default:
+			// The next arg is a value for the current flag, keep them on the same line
+			fmt.Printf("    %s ", arg)
+		}
+	}
+}
+
 // startVM validates prerequisites, clones the source disk into a fresh
 // instance disk if needed, launches qemu-system-*, and waits for its SSH
 // host key to be reachable and pinned. It returns the running process
@@ -114,15 +141,27 @@ func waitForShutdown(qemuCmd *exec.Cmd, maxWait time.Duration) error {
 // verbose are both set, the guest's serial console is tailed live to
 // stdout -- otherwise headless mode has no visible output at all until the
 // SSH-wait heartbeats kick in, which can look stuck.
-func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int, verbose bool) (*exec.Cmd, string, error) {
-	qcfg, err := prepareVMDisks(ctx, r)
+func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int, verbose, dryRun bool) (*exec.Cmd, string, error) {
+	var qcfg platform.QEMUConfig
+
+	var err error
+
+	if dryRun {
+		qcfg, err = platform.DetectForHost(r.Arch)
+	} else {
+		qcfg, err = prepareVMDisks(ctx, r)
+	}
+
 	if err != nil {
 		return nil, "", err
 	}
 
 	knownHostsFile := filepath.Join(r.BuildDir, "known_hosts")
 	hostPort := fmt.Sprintf("[localhost]:%d", sshPort)
-	_ = qemurun.RemoveHostKey(ctx, knownHostsFile, hostPort)
+
+	if !dryRun {
+		_ = qemurun.RemoveHostKey(ctx, knownHostsFile, hostPort)
+	}
 
 	qrCfg := qemurun.Config{
 		QEMU:          qcfg,
@@ -134,14 +173,21 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		SerialLogPath: filepath.Join(r.BuildDir, r.ImageTag+"-console.log"),
 	}
 
-	// QEMU's -serial file: backend appends to an existing file rather than
-	// truncating it, so a stale log from a previous run would otherwise get
-	// replayed by --verbose's console tail before catching up to the
-	// current boot -- very confusing to read. Best-effort: an absent file
-	// isn't an error.
-	_ = os.Remove(qrCfg.SerialLogPath)
+	if !dryRun {
+		// QEMU's -serial file: backend appends to an existing file rather than
+		// truncating it, so a stale log from a previous run would otherwise get
+		// replayed by --verbose's console tail before catching up to the
+		// current boot -- very confusing to read. Best-effort: an absent file
+		// isn't an error.
+		_ = os.Remove(qrCfg.SerialLogPath)
+	}
 
 	args := qemurun.BuildArgs(qrCfg)
+
+	if dryRun {
+		printDryRun(qcfg.Binary, args)
+		return nil, "", nil
+	}
 
 	keyPath := filepath.Join(r.BuildDir, "id_ed25519")
 	fmt.Printf("launching %s %s VM with %s (headless=%v)\n", r.Arch, r.ImageTag, qcfg.Binary, headless)

@@ -79,6 +79,12 @@ func BuildArgs(cfg Config) []string {
 		// every boot of every image keeps that config valid always.
 		"-device", "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56",
 		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:22", sshPort),
+		// Provide the virtio-serial bus and char device channel for qemu-guest-agent.
+		// If these are missing, systemctl start qemu-guest-agent blocks indefinitely
+		// waiting for /dev/virtio-ports/org.qemu.guest_agent.0 to appear.
+		"-device", "virtio-serial",
+		"-chardev", "qemu-vdagent,id=qemu_vdagent",
+		"-device", "virtserialport,chardev=qemu_vdagent,name=org.qemu.guest_agent.0",
 	)
 
 	if cfg.Headless {
