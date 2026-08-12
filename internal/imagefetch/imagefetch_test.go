@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDownloadWritesFileAtomically(t *testing.T) {
@@ -37,6 +38,10 @@ func TestDownloadWritesFileAtomically(t *testing.T) {
 }
 
 func TestDownloadNon200Errors(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = time.Millisecond
+	t.Cleanup(func() { retryDelay = origDelay })
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))

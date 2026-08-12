@@ -82,6 +82,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.qemu_packages }}
 
+      - name: Enable KVM group perms
+        # GitHub-hosted runners have KVM-capable hardware but don't ship
+        # /dev/kvm with permissions the runner user can use out of the box
+        # -- this udev rule opens it up (0666) so the check below (and QEMU
+        # itself) can actually use it instead of falling back to TCG.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Verify KVM is available
         run: |
           test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
@@ -137,6 +147,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Enable KVM group perms
+        # GitHub-hosted runners have KVM-capable hardware but don't ship
+        # /dev/kvm with permissions the runner user can use out of the box
+        # -- this udev rule opens it up (0666) so the check below (and QEMU
+        # itself) can actually use it instead of falling back to TCG.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Verify KVM is available
         run: |

@@ -16,7 +16,55 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// retryAttempts/retryDelay bound how hard a transient upstream failure is
+// retried before giving up. Fedora's download.fedoraproject.org redirects
+// each request to a mirror picked by its own mirrormanager, and individual
+// mirrors intermittently 404 or 5xx despite the file existing on others --
+// a fresh request often lands on a different, healthy mirror, so a few
+// retries clear most of these without any code-level mirror list. Vars
+// (not consts) so tests can shrink retryDelay instead of eating it for real.
+var (
+	retryAttempts = 3
+	retryDelay    = 2 * time.Second
+)
+
+// doGetWithRetry issues an HTTP GET, retrying up to retryAttempts times (with
+// retryDelay between attempts) on a transport error or non-200 status. The
+// caller owns closing the returned response's body.
+func doGetWithRetry(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= retryAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("building request for %s: %w", url, err)
+		}
+
+		resp, err := client.Do(req)
+		switch {
+		case err != nil:
+			lastErr = err
+		case resp.StatusCode != http.StatusOK:
+			lastErr = fmt.Errorf("unexpected status %s", resp.Status)
+			_ = resp.Body.Close()
+		default:
+			return resp, nil
+		}
+
+		if attempt < retryAttempts {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelay):
+			}
+		}
+	}
+
+	return nil, lastErr
+}
 
 // Download streams url to destPath, writing to a temporary "<destPath>.part"
 // file first and renaming into place only on success, so a failed or
@@ -26,20 +74,11 @@ func Download(ctx context.Context, client *http.Client, url, destPath string) er
 		client = http.DefaultClient
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("building request for %s: %w", url, err)
-	}
-
-	resp, err := client.Do(req)
+	resp, err := doGetWithRetry(ctx, client, url)
 	if err != nil {
 		return fmt.Errorf("downloading %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading %s: unexpected status %s", url, resp.Status)
-	}
 
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
 		return fmt.Errorf("creating destination dir: %w", err)
@@ -78,20 +117,11 @@ func FetchText(ctx context.Context, client *http.Client, url string) ([]byte, er
 		client = http.DefaultClient
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("building request for %s: %w", url, err)
-	}
-
-	resp, err := client.Do(req)
+	resp, err := doGetWithRetry(ctx, client, url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetching %s: unexpected status %s", url, resp.Status)
-	}
 
 	return io.ReadAll(resp.Body)
 }
