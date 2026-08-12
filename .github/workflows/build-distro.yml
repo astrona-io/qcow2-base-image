@@ -1,0 +1,216 @@
+name: Build one distro (base + its layers)
+
+# Reusable workflow, called once per distro (see build-all.yml's `build`
+# job) instead of being one flat workflow with a single build-base job and
+# a single build-layer job. That flat shape has a real limitation: GitHub
+# Actions' `needs:` waits for an ENTIRE matrixed job (every leg) before a
+# dependent job starts, not just the matching leg -- so a layer job would
+# wait for every distro's base to finish, not just its own distro's base.
+# Calling this reusable workflow once per distro (as its own matrix of
+# workflow_call jobs) gives each distro a fully independent base -> layers
+# chain: e.g. ubuntu's layers start the moment ubuntu's base finishes,
+# without waiting on fedora or opensuse at all.
+on:
+  workflow_call:
+    inputs:
+      distro:
+        required: true
+        type: string
+      push:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  discover-layers:
+    runs-on: ubuntu-latest
+    outputs:
+      layer_matrix: ${{ steps.matrix.outputs.layer_matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build this distro's layer matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          ARCHS='["amd64","arm64"]'
+
+          runner_and_pkgs='
+            (if $arch == "arm64"
+              then {runner: "ubuntu-24.04-arm", qemu_packages: "qemu-system-arm qemu-efi-aarch64"}
+              else {runner: "ubuntu-latest", qemu_packages: "qemu-system-x86 ovmf"}
+            end)'
+
+          LAYERS_JSON=$( (ls "distros/${{ inputs.distro }}/layers" 2>/dev/null || true) \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          LAYER_MATRIX=$(jq -nc --argjson layers "$LAYERS_JSON" --argjson archs "$ARCHS" '
+            {include: [
+              $layers[] as $layer | $archs[] as $arch |
+              {layer: $layer, arch: $arch} + '"$runner_and_pkgs"'
+            ]}')
+          echo "layer_matrix=$LAYER_MATRIX" >> "$GITHUB_OUTPUT"
+          echo "layer matrix for ${{ inputs.distro }}: $LAYER_MATRIX"
+
+  base:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            qemu_packages: qemu-system-x86 ovmf
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            qemu_packages: qemu-system-arm qemu-efi-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU + EFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Enable KVM group perms
+        # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
+        # ship /dev/kvm with permissions the runner user can use out of the
+        # box -- this udev rule opens it up (0666) so the check below (and
+        # QEMU itself) can use it instead of falling back to TCG. Best
+        # effort, not fatal here: nested-virt support isn't guaranteed
+        # uniform across GitHub's runner fleet, so some instances have no
+        # /dev/kvm at all (a genuinely absent device, not a permissions
+        # problem) -- the informational check below just surfaces which
+        # case this runner landed in.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
+
+      - name: Check KVM availability
+        # Informational only -- astroimg's own accel detection
+        # (internal/platform.KVMUsable) falls back to TCG software
+        # emulation automatically when /dev/kvm isn't usable, so this no
+        # longer needs to fail the job. It's a real signal worth surfacing
+        # though: TCG is much slower, so a run that used it will take
+        # noticeably longer than usual.
+        run: |
+          if test -w /dev/kvm 2>/dev/null; then
+            echo "KVM available"
+          else
+            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
+          fi
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Build astroimg
+        run: go build -o bin/astroimg ./cmd/astroimg
+
+      - name: Run pipeline (headless)
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "${{ inputs.distro }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload base artifact (consumed by this distro's layer builds, and downloadable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.distro }}-base-${{ matrix.arch }}
+          path: build/*.qcow2
+          retention-days: 7
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push artifact
+        if: ${{ inputs.push }}
+        run: |
+          ./bin/astroimg push \
+            --distro "${{ inputs.distro }}" \
+            --arch "${{ matrix.arch }}" \
+            --registry ghcr.io \
+            --gh-user "${{ github.repository_owner }}"
+
+  layers:
+    needs: [discover-layers, base]
+    if: ${{ fromJson(needs.discover-layers.outputs.layer_matrix).include[0] != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-layers.outputs.layer_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU + EFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
+
+      - name: Check KVM availability
+        run: |
+          if test -w /dev/kvm 2>/dev/null; then
+            echo "KVM available"
+          else
+            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
+          fi
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Build astroimg
+        run: go build -o bin/astroimg ./cmd/astroimg
+
+      - name: Download this distro/arch's base artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.distro }}-base-${{ matrix.arch }}
+          path: build
+
+      - name: Run pipeline (headless)
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "${{ inputs.distro }}" \
+            --layer "${{ matrix.layer }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload layer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.distro }}-${{ matrix.layer }}-${{ matrix.arch }}
+          path: build/*${{ matrix.layer }}*.qcow2
+          retention-days: 7
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push artifact
+        if: ${{ inputs.push }}
+        run: |
+          ./bin/astroimg push \
+            --distro "${{ inputs.distro }}" \
+            --layer "${{ matrix.layer }}" \
+            --arch "${{ matrix.arch }}" \
+            --registry ghcr.io \
+            --gh-user "${{ github.repository_owner }}"

@@ -3,12 +3,14 @@ name: Build all golden images
 # Manual trigger only, same reasoning as build-image.yml: a full image build
 # takes 5-10+ minutes per distro/layer/arch and consumes Actions minutes.
 #
-# Dynamic by design: the `discover` job lists distros/* and
-# distros/*/layers/* off the filesystem and turns them into matrix JSON, so
-# adding a new distro or layer directory picks it up automatically -- no
-# workflow edits needed. Base images build first (one job per distro x
-# arch), then layers build after (one job per distro x layer x arch), each
-# layer job downloading its matching base artifact instead of rebuilding it.
+# Dynamic by design: `discover` lists distros/* off the filesystem, so
+# adding a new distro directory picks it up automatically -- no workflow
+# edits needed. Each distro then gets its own independent call into
+# build-distro.yml (a reusable workflow), which builds that one distro's
+# base (both arches) and then its layers -- see build-distro.yml's header
+# comment for why this is a separate reusable workflow rather than one flat
+# job: it's what lets e.g. ubuntu's layers start as soon as ubuntu's base
+# finishes, without waiting on fedora or opensuse's base too.
 on:
   workflow_dispatch:
     inputs:
@@ -25,210 +27,26 @@ jobs:
   discover:
     runs-on: ubuntu-latest
     outputs:
-      base_matrix: ${{ steps.matrix.outputs.base_matrix }}
-      layer_matrix: ${{ steps.matrix.outputs.layer_matrix }}
+      distros: ${{ steps.list.outputs.distros }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build distro/layer matrices
-        id: matrix
+      - name: List distros
+        id: list
         run: |
           set -euo pipefail
-          ARCHS='["amd64","arm64"]'
-
-          runner_and_pkgs='
-            (if $arch == "arm64"
-              then {runner: "ubuntu-24.04-arm", qemu_packages: "qemu-system-arm qemu-efi-aarch64"}
-              else {runner: "ubuntu-latest", qemu_packages: "qemu-system-x86 ovmf"}
-            end)'
-
           DISTROS_JSON=$(ls distros | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          BASE_MATRIX=$(jq -nc --argjson distros "$DISTROS_JSON" --argjson archs "$ARCHS" '
-            {include: [
-              $distros[] as $distro | $archs[] as $arch |
-              {distro: $distro, arch: $arch} + '"$runner_and_pkgs"'
-            ]}')
-          echo "base_matrix=$BASE_MATRIX" >> "$GITHUB_OUTPUT"
+          echo "distros=$DISTROS_JSON" >> "$GITHUB_OUTPUT"
+          echo "distros: $DISTROS_JSON"
 
-          PAIRS_JSON=$(find distros -mindepth 3 -maxdepth 3 -type d -path '*/layers/*' \
-            | sed 's#^distros/##' \
-            | awk -F/ '{printf "{\"distro\":\"%s\",\"layer\":\"%s\"}\n", $1, $3}' \
-            | jq -s -c '.')
-          LAYER_MATRIX=$(jq -nc --argjson pairs "$PAIRS_JSON" --argjson archs "$ARCHS" '
-            {include: [
-              $pairs[] as $p | $archs[] as $arch |
-              {distro: $p.distro, layer: $p.layer, arch: $arch} + '"$runner_and_pkgs"'
-            ]}')
-          echo "layer_matrix=$LAYER_MATRIX" >> "$GITHUB_OUTPUT"
-
-          echo "base matrix:  $BASE_MATRIX"
-          echo "layer matrix: $LAYER_MATRIX"
-
-  build-base:
+  build:
     needs: discover
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.discover.outputs.base_matrix) }}
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
-      - name: Install QEMU + EFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.qemu_packages }}
-
-      - name: Enable KVM group perms
-        # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
-        # ship /dev/kvm with permissions the runner user can use out of the
-        # box -- this udev rule opens it up (0666) so the check below (and
-        # QEMU itself) can use it instead of falling back to TCG. Best
-        # effort, not fatal here: nested-virt support isn't guaranteed
-        # uniform across GitHub's runner fleet, so some instances have no
-        # /dev/kvm at all (a genuinely absent device, not a permissions
-        # problem) -- the dedicated check below is the real pass/fail gate
-        # and gives a clear error either way.
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules || true
-          sudo udevadm trigger --name-match=kvm || true
-
-      - name: Check KVM availability
-        # Informational only -- astroimg's own accel detection
-        # (internal/platform.KVMUsable) falls back to TCG software
-        # emulation automatically when /dev/kvm isn't usable, so this no
-        # longer needs to fail the job. It's a real signal worth surfacing
-        # though: TCG is much slower, so a run that used it will take
-        # noticeably longer than usual.
-        run: |
-          if test -w /dev/kvm 2>/dev/null; then
-            echo "KVM available"
-          else
-            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
-          fi
-
-      - name: Set up oras
-        uses: oras-project/setup-oras@v1
-
-      - name: Build astroimg
-        run: go build -o bin/astroimg ./cmd/astroimg
-
-      - name: Run pipeline (headless)
-        run: |
-          ./bin/astroimg pipeline \
-            --headless \
-            --distro "${{ matrix.distro }}" \
-            --arch "${{ matrix.arch }}"
-
-      - name: Upload base artifact (consumed by layer builds, and downloadable)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.distro }}-base-${{ matrix.arch }}
-          path: build/*.qcow2
-          retention-days: 7
-
-      - name: Log in to registry
-        if: ${{ inputs.push }}
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Push artifact
-        if: ${{ inputs.push }}
-        run: |
-          ./bin/astroimg push \
-            --distro "${{ matrix.distro }}" \
-            --arch "${{ matrix.arch }}" \
-            --registry ghcr.io \
-            --gh-user "${{ github.repository_owner }}"
-
-  build-layer:
-    needs: [discover, build-base]
-    if: ${{ fromJson(needs.discover.outputs.layer_matrix).include[0] != null }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover.outputs.layer_matrix) }}
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
-      - name: Install QEMU + EFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.qemu_packages }}
-
-      - name: Enable KVM group perms
-        # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
-        # ship /dev/kvm with permissions the runner user can use out of the
-        # box -- this udev rule opens it up (0666) so the check below (and
-        # QEMU itself) can use it instead of falling back to TCG. Best
-        # effort, not fatal here: nested-virt support isn't guaranteed
-        # uniform across GitHub's runner fleet, so some instances have no
-        # /dev/kvm at all (a genuinely absent device, not a permissions
-        # problem) -- the dedicated check below is the real pass/fail gate
-        # and gives a clear error either way.
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules || true
-          sudo udevadm trigger --name-match=kvm || true
-
-      - name: Check KVM availability
-        # Informational only -- astroimg's own accel detection
-        # (internal/platform.KVMUsable) falls back to TCG software
-        # emulation automatically when /dev/kvm isn't usable, so this no
-        # longer needs to fail the job. It's a real signal worth surfacing
-        # though: TCG is much slower, so a run that used it will take
-        # noticeably longer than usual.
-        run: |
-          if test -w /dev/kvm 2>/dev/null; then
-            echo "KVM available"
-          else
-            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
-          fi
-
-      - name: Set up oras
-        uses: oras-project/setup-oras@v1
-
-      - name: Build astroimg
-        run: go build -o bin/astroimg ./cmd/astroimg
-
-      - name: Download this distro/arch's base artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.distro }}-base-${{ matrix.arch }}
-          path: build
-
-      - name: Run pipeline (headless)
-        run: |
-          ./bin/astroimg pipeline \
-            --headless \
-            --distro "${{ matrix.distro }}" \
-            --layer "${{ matrix.layer }}" \
-            --arch "${{ matrix.arch }}"
-
-      - name: Upload layer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.distro }}-${{ matrix.layer }}-${{ matrix.arch }}
-          path: build/*${{ matrix.layer }}*.qcow2
-          retention-days: 7
-
-      - name: Log in to registry
-        if: ${{ inputs.push }}
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Push artifact
-        if: ${{ inputs.push }}
-        run: |
-          ./bin/astroimg push \
-            --distro "${{ matrix.distro }}" \
-            --layer "${{ matrix.layer }}" \
-            --arch "${{ matrix.arch }}" \
-            --registry ghcr.io \
-            --gh-user "${{ github.repository_owner }}"
+      matrix:
+        distro: ${{ fromJson(needs.discover.outputs.distros) }}
+    uses: ./.github/workflows/build-distro.yml
+    with:
+      distro: ${{ matrix.distro }}
+      push: ${{ inputs.push }}
+    secrets: inherit
