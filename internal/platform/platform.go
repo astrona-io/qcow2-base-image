@@ -57,14 +57,25 @@ func BinaryAndMachine(targetArch string) (binary, machine string, err error) {
 }
 
 // SelectAccel returns the QEMU acceleration/cpu flags for running
-// targetArch on a host with hostOS/hostArch. Pure function, no I/O.
-func SelectAccel(hostOS, hostArch, targetArch string) []string {
+// targetArch on a host with hostOS/hostArch. kvmUsable is only consulted
+// for native Linux builds -- pass the result of KVMUsable() in production,
+// a fixed value in tests. Pure function, no I/O itself.
+func SelectAccel(hostOS, hostArch, targetArch string, kvmUsable bool) []string {
 	if hostArch == targetArch {
 		if hostOS == "darwin" {
 			return []string{flagAccel, "hvf", flagCPU, "host"}
 		}
 
-		return []string{flagAccel, "kvm", flagCPU, "host"}
+		if kvmUsable {
+			return []string{flagAccel, "kvm", flagCPU, "host"}
+		}
+
+		// /dev/kvm missing or unusable -- known to happen on a fraction of
+		// GitHub-hosted runner instances (nested-virt support isn't
+		// guaranteed uniform across their fleet). Fall back to TCG software
+		// emulation: much slower than KVM, but the build completes instead
+		// of QEMU failing outright to init KVM.
+		return []string{flagAccel, "tcg", flagCPU, "max"}
 	}
 	// Cross-architecture emulation: no hardware acceleration available.
 	if targetArch == ArchARM64 {
@@ -72,6 +83,21 @@ func SelectAccel(hostOS, hostArch, targetArch string) []string {
 	}
 
 	return []string{flagCPU, "qemu64"}
+}
+
+// KVMUsable reports whether /dev/kvm exists and can actually be opened for
+// read/write by this process -- the two ways a Linux host can fail to
+// support KVM acceleration (module not present, or present but permission-
+// denied, both observed on GitHub-hosted runners).
+func KVMUsable() bool {
+	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+
+	_ = f.Close()
+
+	return true
 }
 
 // efiCandidates lists, in preference order, where each OS's package
@@ -151,7 +177,7 @@ func Detect(hostOS, hostArch, targetArch string) (QEMUConfig, error) {
 	return QEMUConfig{
 		Binary:    binary,
 		Machine:   machine,
-		AccelArgs: SelectAccel(hostOS, hostArch, targetArch),
+		AccelArgs: SelectAccel(hostOS, hostArch, targetArch, KVMUsable()),
 		EFICode:   code,
 		EFIVars:   vars,
 	}, nil

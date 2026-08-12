@@ -97,9 +97,19 @@ jobs:
           sudo udevadm control --reload-rules || true
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Verify KVM is available
+      - name: Check KVM availability
+        # Informational only -- astroimg's own accel detection
+        # (internal/platform.KVMUsable) falls back to TCG software
+        # emulation automatically when /dev/kvm isn't usable, so this no
+        # longer needs to fail the job. It's a real signal worth surfacing
+        # though: TCG is much slower, so a run that used it will take
+        # noticeably longer than usual.
         run: |
-          test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
+          if test -w /dev/kvm 2>/dev/null; then
+            echo "KVM available"
+          else
+            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
+          fi
 
       - name: Set up oras
         uses: oras-project/setup-oras@v1
@@ -168,9 +178,19 @@ jobs:
           sudo udevadm control --reload-rules || true
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Verify KVM is available
+      - name: Check KVM availability
+        # Informational only -- astroimg's own accel detection
+        # (internal/platform.KVMUsable) falls back to TCG software
+        # emulation automatically when /dev/kvm isn't usable, so this no
+        # longer needs to fail the job. It's a real signal worth surfacing
+        # though: TCG is much slower, so a run that used it will take
+        # noticeably longer than usual.
         run: |
-          test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
+          if test -w /dev/kvm 2>/dev/null; then
+            echo "KVM available"
+          else
+            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
+          fi
 
       - name: Set up oras
         uses: oras-project/setup-oras@v1

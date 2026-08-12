@@ -29,23 +29,29 @@ func TestBinaryAndMachine(t *testing.T) {
 }
 
 func TestSelectAccelNativeDarwin(t *testing.T) {
-	got := SelectAccel("darwin", "arm64", "arm64")
+	got := SelectAccel("darwin", "arm64", "arm64", false)
 	want := []string{"-accel", "hvf", "-cpu", "host"}
 	assertEqualSlice(t, got, want)
 }
 
-func TestSelectAccelNativeLinux(t *testing.T) {
-	got := SelectAccel("linux", "amd64", "amd64")
+func TestSelectAccelNativeLinuxKVM(t *testing.T) {
+	got := SelectAccel("linux", "amd64", "amd64", true)
 	want := []string{"-accel", "kvm", "-cpu", "host"}
 	assertEqualSlice(t, got, want)
 }
 
+func TestSelectAccelNativeLinuxNoKVM(t *testing.T) {
+	got := SelectAccel("linux", "amd64", "amd64", false)
+	want := []string{"-accel", "tcg", "-cpu", "max"}
+	assertEqualSlice(t, got, want)
+}
+
 func TestSelectAccelCrossArch(t *testing.T) {
-	got := SelectAccel("darwin", "arm64", "amd64")
+	got := SelectAccel("darwin", "arm64", "amd64", false)
 	want := []string{"-cpu", "qemu64"}
 	assertEqualSlice(t, got, want)
 
-	got = SelectAccel("linux", "amd64", "arm64")
+	got = SelectAccel("linux", "amd64", "arm64", true)
 	want = []string{"-cpu", "cortex-a57"}
 	assertEqualSlice(t, got, want)
 }

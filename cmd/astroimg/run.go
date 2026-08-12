@@ -65,9 +65,9 @@ func init() {
 func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHostsFile string) error {
 	keyPath := filepath.Join(r.RuntimeDir, "id_ed25519")
 
-	fmt.Println("waiting for cloud-init to finish provisioning (this can take 5-10+ min)...")
+	fmt.Println("waiting for cloud-init to finish provisioning (5-10+ min on KVM, much longer if this host fell back to TCG software emulation)...")
 
-	if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, r.SSHUser, "localhost", 30*time.Minute); err != nil {
+	if err := qemurun.WaitForCloudInit(ctx, keyPath, knownHostsFile, flagSSHPort, r.SSHUser, "localhost", 90*time.Minute); err != nil {
 		return fmt.Errorf("waiting for cloud-init: %w", err)
 	}
 
@@ -79,7 +79,7 @@ func sealVM(ctx context.Context, r config.Resolved, qemuCmd *exec.Cmd, knownHost
 
 	fmt.Println("waiting for the VM to power off...")
 
-	if err := waitForShutdown(qemuCmd, 2*time.Minute); err != nil {
+	if err := waitForShutdown(qemuCmd, 5*time.Minute); err != nil {
 		return fmt.Errorf("%w -- check %s", err, filepath.Join(r.RuntimeDir, r.ImageTag+"-console.log"))
 	}
 
@@ -209,9 +209,9 @@ func startVM(ctx context.Context, r config.Resolved, headless bool, sshPort int,
 		go func() { _ = qemurun.TailFile(ctx, qrCfg.SerialLogPath, os.Stdout) }()
 	}
 
-	fmt.Println("waiting for VM SSH host key (first boot can take 5-10+ min)...")
+	fmt.Println("waiting for VM SSH host key (first boot can take 5-10+ min, longer under TCG)...")
 
-	if err := qemurun.WaitAndPinHostKey(ctx, knownHostsFile, sshPort, 10*time.Minute); err != nil {
+	if err := qemurun.WaitAndPinHostKey(ctx, knownHostsFile, sshPort, 20*time.Minute); err != nil {
 		fmt.Println("warning:", err, "-- run 'astroimg pin-hostkey' manually once it's up")
 	} else {
 		fmt.Println("host key pinned")
