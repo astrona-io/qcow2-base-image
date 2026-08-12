@@ -121,15 +121,20 @@ base at 7G plus a docker layer might only add ~100M, not another 7G file.
 standalone image**. It stores a path reference to its base and won't boot
 without that exact base file present alongside it. `build` records that
 reference as a *relative* filename (not an absolute build-machine path), so
-it resolves correctly as long as both files end up in the same directory --
-which is exactly what happens next:
+locally it just works as long as both files stay in the same `build/`
+directory.
 
-- `astroimg push` for a layer built without `--flatten` bundles the base
-  qcow2 into the layer's own OCI manifest as a second blob (registries
-  dedupe identical blobs by digest, so this doesn't cost extra storage per
-  layer). One `astroimg push --distro ubuntu --layer docker` is enough --
-  no separate base push required for that layer to be pullable and
-  bootable on its own.
+- `astroimg push` for a layer built without `--flatten` stages a copy of
+  the artifact under the fixed name `image.qcow2`, re-points its
+  backing_file at `base.qcow2` (metadata-only, `qemu-img rebase -u` --
+  the real `build/` artifact is never touched), and bundles the base qcow2
+  (as `base.qcow2`) into the same OCI manifest as a second blob
+  (registries dedupe identical blobs by digest, so this doesn't cost extra
+  storage per layer). One `astroimg push --distro ubuntu --layer docker`
+  is enough -- no separate base push required for that layer to be
+  pullable and bootable on its own, and every tag always yields the same
+  `image.qcow2`(`+base.qcow2`) filenames on pull (see "How to Retrieve the
+  Golden Image" below).
 - Push the base under its own tag too (`astroimg push --distro ubuntu`) if
   you also want base-only consumers to be able to pull it standalone.
 - If you need a single, fully self-contained file instead (simpler
@@ -339,7 +344,9 @@ the base under its own tag too, for consumers who just want the base:
 astroimg push --distro ubuntu
 astroimg push --distro ubuntu --layer docker
 ```
-Default ref is `ghcr.io/<git-config-user.name>/<image-tag>:<arch>` --
+Default ref is
+`ghcr.io/<git-config-user.name>/<distro>-qcow2-image:<os-version>-<layer-or-"base">-<arch>`
+(e.g. `ghcr.io/astrona-io/ubuntu-qcow2-image:24.04-docker-arm64`) --
 override the namespace with `--gh-user` if that's wrong, `--registry` if
 you're not using GHCR.
 
@@ -378,13 +385,20 @@ gh workflow run build-image.yml -f distro=ubuntu -f layer= -f push=true
 ### How to Retrieve the Golden Image (Downstream Consumption)
 
 Because the template is pushed as a raw OCI Artifact, consumers don't need
-Docker to run it -- just the `oras` CLI to pull the raw file straight to
-disk.
+Docker to run it -- just the `oras` CLI to pull the raw file(s) straight to
+disk. Every tag pulls to the same fixed filenames, regardless of
+distro/version/layer/arch -- `image.qcow2` always, plus `base.qcow2` too
+when the tag is a non-flattened layer (its `backing_file` already points at
+`base.qcow2`, so it boots as pulled, no rebase step needed):
 
-**1. Pull the raw `.qcow2` disk:**
+**1. Pull the disk (base image, in this example):**
 ```bash
-oras pull ghcr.io/YOUR_GITHUB_USERNAME/ubuntu-24.04-desktop-arm64:arm64
+oras pull ghcr.io/YOUR_GITHUB_USERNAME/ubuntu-qcow2-image:24.04-base-arm64
+# -> image.qcow2
 ```
+Pulling a layer tag instead (e.g. `:24.04-docker-arm64`) lands both
+`image.qcow2` (the layer) and `base.qcow2` (what it's backed by) in one
+pull.
 
 **2. Create a new Test Lab `user-data`:**
 Create a file named `user-data` that creates a new admin user called `labadmin`:
@@ -429,7 +443,7 @@ qemu-system-aarch64 \
     -M virt,highmem=on -accel hvf -cpu host -smp 4 -m 4096 \
     -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
     -drive if=pflash,format=raw,file=vars.fd \
-    -drive if=virtio,file=ubuntu-24.04-desktop-arm64.qcow2,format=qcow2 \
+    -drive if=virtio,file=image.qcow2,format=qcow2 \
     -drive if=virtio,file=lab-cloud-init.iso,format=raw \
     -smbios type=1,serial=ds=nocloud \
     -device virtio-gpu-pci -display cocoa,show-cursor=on \

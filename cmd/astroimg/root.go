@@ -142,7 +142,7 @@ func ociImage(r config.Resolved) string {
 		ghUser = gitConfigUserNameOrDefault()
 	}
 
-	return config.OCIImage(flagRegistry, ghUser, r.ImageTag, r.Arch)
+	return config.OCIImage(flagRegistry, ghUser, r.OCIRepo, r.OCITag)
 }
 
 // ociSourceAnnotations builds the OCI manifest annotations set on push.

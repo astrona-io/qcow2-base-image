@@ -161,6 +161,13 @@ type Resolved struct {
 	ImageTag         string
 	InstanceIDPrefix string
 
+	// OCIRepo/OCITag are the registry-facing name, decoupled from
+	// ImageTag/FinalImageName (which stay tied to local build/ filenames).
+	// OCIRepo is fixed per distro; OCITag alone carries version/layer/arch,
+	// e.g. ghcr.io/<user>/ubuntu-qcow2-image:24.04-docker-arm64.
+	OCIRepo string
+	OCITag  string
+
 	OSRelease   string
 	ImageURL    string
 	ChecksumURL string
@@ -226,6 +233,14 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 		r.ChecksumURL = checksumURL
 	}
 
+	layerOrBase := opts.Layer
+	if layerOrBase == "" {
+		layerOrBase = "base"
+	}
+
+	r.OCIRepo = fmt.Sprintf("%s-qcow2-image", opts.Distro)
+	r.OCITag = fmt.Sprintf("%s-%s-%s", cfg.OSVersion, layerOrBase, opts.Arch)
+
 	baseImageTag := fmt.Sprintf("%s-%s-%s", opts.Distro, cfg.OSVersion, cfg.ImageVariant)
 	r.BaseDisk = filepath.Join(runtimeDir, fmt.Sprintf("base-%s-%s.qcow2", opts.Distro, opts.Arch))
 	r.DownloadedImg = filepath.Join(runtimeDir, fmt.Sprintf("%s-server-cloudimg-%s.img", cfg.OSRelease, opts.Arch))
@@ -264,14 +279,17 @@ func Resolve(cfg DistroConfig, distroDir, layerDir string, opts Options) (Resolv
 	r.UserData = filepath.Join(runtimeDir, r.ImageTag+"-user-data")
 	r.MetaData = filepath.Join(runtimeDir, r.ImageTag+"-meta-data")
 	r.TestExtractDir = filepath.Join(runtimeDir, "test-extract")
-	r.TestImageName = filepath.Join(r.TestExtractDir, r.FinalImageName)
+	// "image.qcow2" not r.FinalImageName: astroimg push always stages/pushes
+	// its blob under this fixed name (see cmd/astroimg/push.go), so a pull
+	// always produces this filename regardless of distro/layer/arch.
+	r.TestImageName = filepath.Join(r.TestExtractDir, "image.qcow2")
 
 	return r, nil
 }
 
 // OCIImage builds the OCI artifact reference used by push/test-oci.
-func OCIImage(registry, ghUser, imageTag, arch string) string {
-	return fmt.Sprintf("%s/%s/%s:%s", registry, ghUser, imageTag, arch)
+func OCIImage(registry, ghUser, repo, tag string) string {
+	return fmt.Sprintf("%s/%s/%s:%s", registry, ghUser, repo, tag)
 }
 
 type templateVars struct {

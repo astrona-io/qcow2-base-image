@@ -31,29 +31,67 @@ var pushCmd = &cobra.Command{
 
 		const qcowMediaType = "application/vnd.qemu.disk.qcow2"
 
-		files := []orasclient.File{{Path: finalPath, MediaType: qcowMediaType}}
-
+		var backing string
 		if r.Layer != "" {
-			backing, err := qemuImgBackingFile(cmd.Context(), finalPath)
+			backing, err = qemuImgBackingFile(cmd.Context(), finalPath)
 			if err != nil {
 				return fmt.Errorf("inspecting %s: %w", finalPath, err)
 			}
+		}
 
-			if backing != "" {
-				if _, err := os.Stat(r.SourceDisk); errors.Is(err, os.ErrNotExist) {
-					return fmt.Errorf("%s (this layer's backing base) not found, run 'astroimg build' for the base first", r.SourceDisk)
-				}
+		// Every pushed manifest's own artifact is staged and pushed under
+		// the fixed name "image.qcow2" (and, when bundling a base,
+		// "base.qcow2") -- never the distro/layer/arch-specific local
+		// filename -- so a consumer can always `oras pull` any tag and find
+		// the same two filenames, without inspecting the manifest first.
+		// Staging happens in a temp dir under BuildDir (same filesystem, so
+		// hard-linking works) and is never done in place: the build/
+		// artifact must stay byte-identical and unmutated.
+		stageDir, err := os.MkdirTemp(r.BuildDir, ".oci-stage-")
+		if err != nil {
+			return fmt.Errorf("creating staging dir: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(stageDir) }()
 
-				fmt.Printf("bundling base %s into the same manifest (this layer is a backing-file overlay, not --flatten)\n", r.SourceDisk)
+		stagedImage := filepath.Join(stageDir, "image.qcow2")
+		files := []orasclient.File{{Name: "image.qcow2", MediaType: qcowMediaType}}
 
-				files = append(files, orasclient.File{Path: r.SourceDisk, MediaType: qcowMediaType})
+		if backing == "" {
+			if err := linkOrCopy(finalPath, stagedImage); err != nil {
+				return fmt.Errorf("staging %s: %w", finalPath, err)
 			}
+		} else {
+			if _, err := os.Stat(r.SourceDisk); errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("%s (this layer's backing base) not found, run 'astroimg build' for the base first", r.SourceDisk)
+			}
+
+			stagedBase := filepath.Join(stageDir, "base.qcow2")
+			if err := linkOrCopy(r.SourceDisk, stagedBase); err != nil {
+				return fmt.Errorf("staging %s: %w", r.SourceDisk, err)
+			}
+
+			if err := copyFile(finalPath, stagedImage); err != nil {
+				return fmt.Errorf("staging %s: %w", finalPath, err)
+			}
+
+			// Metadata-only: re-point the staged copy's backing_file at
+			// "base.qcow2" (cwd = stageDir, so both names resolve there
+			// too) to match the fixed name it'll actually be pulled as --
+			// the original backing_file (this layer's real local base
+			// filename) only makes sense inside BuildDir.
+			if err := runExternalIn(cmd.Context(), stageDir, "qemu-img", "rebase", "-u", "-F", "qcow2", "-f", "qcow2", "-b", "base.qcow2", "image.qcow2"); err != nil {
+				return fmt.Errorf("repointing staged image at base.qcow2: %w", err)
+			}
+
+			fmt.Printf("bundling base %s into the same manifest (this layer is a backing-file overlay, not --flatten)\n", r.SourceDisk)
+
+			files = append(files, orasclient.File{Name: "base.qcow2", MediaType: qcowMediaType})
 		}
 
 		image := ociImage(r)
 		fmt.Printf("pushing %s to %s...\n", finalPath, image)
 
-		if err := orasclient.Push(cmd.Context(), image, files, ociSourceAnnotations(r.FinalImageName)); err != nil {
+		if err := orasclient.Push(cmd.Context(), image, stageDir, files, ociSourceAnnotations(r.FinalImageName)); err != nil {
 			return err
 		}
 

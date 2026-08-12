@@ -34,6 +34,8 @@ func TestResolveBase(t *testing.T) {
 	want := map[string]string{
 		"TemplateDir":      "distros/ubuntu",
 		"ImageTag":         "ubuntu-24.04-server",
+		"OCIRepo":          "ubuntu-qcow2-image",
+		"OCITag":           "24.04-base-arm64",
 		"BaseDisk":         ".runtime/base-ubuntu-arm64.qcow2",
 		"SourceDisk":       ".runtime/base-ubuntu-arm64.qcow2",
 		"FinalImageName":   "ubuntu-24.04-server-arm64.qcow2",
@@ -49,6 +51,8 @@ func TestResolveBase(t *testing.T) {
 	got := map[string]string{
 		"TemplateDir":      r.TemplateDir,
 		"ImageTag":         r.ImageTag,
+		"OCIRepo":          r.OCIRepo,
+		"OCITag":           r.OCITag,
 		"BaseDisk":         r.BaseDisk,
 		"SourceDisk":       r.SourceDisk,
 		"FinalImageName":   r.FinalImageName,
@@ -177,6 +181,8 @@ func TestResolveLayer(t *testing.T) {
 	want := map[string]string{
 		"TemplateDir":      "distros/ubuntu/layers/docker",
 		"ImageTag":         "ubuntu-24.04-server-docker",
+		"OCIRepo":          "ubuntu-qcow2-image",
+		"OCITag":           "24.04-docker-arm64",
 		"LayerBaseImage":   "build/ubuntu-24.04-server-arm64.qcow2",
 		"SourceDisk":       "build/ubuntu-24.04-server-arm64.qcow2",
 		"FinalImageName":   "ubuntu-24.04-server-docker-arm64.qcow2",
@@ -190,6 +196,8 @@ func TestResolveLayer(t *testing.T) {
 	got := map[string]string{
 		"TemplateDir":      r.TemplateDir,
 		"ImageTag":         r.ImageTag,
+		"OCIRepo":          r.OCIRepo,
+		"OCITag":           r.OCITag,
 		"LayerBaseImage":   r.LayerBaseImage,
 		"SourceDisk":       r.SourceDisk,
 		"FinalImageName":   r.FinalImageName,
@@ -221,6 +229,15 @@ func TestResolveLayerBaseImageOverrideChainsLayers(t *testing.T) {
 
 	if r.SourceDisk != "build/ubuntu-24.04-server-docker-arm64.qcow2" {
 		t.Errorf("SourceDisk = %q, want chained override", r.SourceDisk)
+	}
+}
+
+func TestOCIImage(t *testing.T) {
+	got := OCIImage("ghcr.io", "astrona-io", "ubuntu-qcow2-image", "24.04-docker-arm64")
+	want := "ghcr.io/astrona-io/ubuntu-qcow2-image:24.04-docker-arm64"
+
+	if got != want {
+		t.Errorf("OCIImage = %q, want %q", got, want)
 	}
 }
 

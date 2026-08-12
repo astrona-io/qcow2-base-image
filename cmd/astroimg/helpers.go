@@ -56,7 +56,16 @@ func createOverlayDisk(ctx context.Context, basePath, instancePath string) error
 // runExternal runs an external tool with an explicit argv (never a shell
 // string), streaming its output live.
 func runExternal(ctx context.Context, name string, args ...string) error {
+	return runExternalIn(ctx, "", name, args...)
+}
+
+// runExternalIn is runExternal but run with cwd set to dir (or the current
+// process's cwd if dir is ""). Needed when an argument is a relative path
+// (e.g. a qcow2 backing_file) that must resolve against something other
+// than wherever astroimg itself happens to be running from.
+func runExternalIn(ctx context.Context, dir, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // argv-only, name/args are fixed or internally validated, never shell-interpolated
+	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 
 	cmd.Stderr = os.Stderr
@@ -65,6 +74,17 @@ func runExternal(ctx context.Context, name string, args ...string) error {
 	}
 
 	return nil
+}
+
+// linkOrCopy hard-links src to dst -- fast, no extra disk space for
+// multi-GB qcow2 files -- falling back to a full copy if hard-linking
+// isn't possible (e.g. src/dst on different filesystems).
+func linkOrCopy(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+
+	return copyFile(src, dst)
 }
 
 // gitConfigUserNameOrDefault resolves a default OCI registry namespace when
