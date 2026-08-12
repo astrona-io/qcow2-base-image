@@ -55,14 +55,19 @@ jobs:
           sudo apt-get install -y ${{ matrix.qemu_packages }}
 
       - name: Enable KVM group perms
-        # GitHub-hosted runners have KVM-capable hardware but don't ship
-        # /dev/kvm with permissions the runner user can use out of the box
-        # -- this udev rule opens it up (0666) so the check below (and QEMU
-        # itself) can actually use it instead of falling back to TCG.
+        # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
+        # ship /dev/kvm with permissions the runner user can use out of the
+        # box -- this udev rule opens it up (0666) so the check below (and
+        # QEMU itself) can use it instead of falling back to TCG. Best
+        # effort, not fatal here: nested-virt support isn't guaranteed
+        # uniform across GitHub's runner fleet, so some instances have no
+        # /dev/kvm at all (a genuinely absent device, not a permissions
+        # problem) -- the dedicated check below is the real pass/fail gate
+        # and gives a clear error either way.
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
 
       - name: Verify KVM is available
         run: |
