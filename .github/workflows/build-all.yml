@@ -1,0 +1,184 @@
+name: Build all golden images
+
+# Manual trigger only, same reasoning as build-image.yml: a full image build
+# takes 5-10+ minutes per distro/layer/arch and consumes Actions minutes.
+#
+# Dynamic by design: the `discover` job lists distros/* and
+# distros/*/layers/* off the filesystem and turns them into matrix JSON, so
+# adding a new distro or layer directory picks it up automatically -- no
+# workflow edits needed. Base images build first (one job per distro x
+# arch), then layers build after (one job per distro x layer x arch), each
+# layer job downloading its matching base artifact instead of rebuilding it.
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push built artifacts to the registry"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      base_matrix: ${{ steps.matrix.outputs.base_matrix }}
+      layer_matrix: ${{ steps.matrix.outputs.layer_matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build distro/layer matrices
+        id: matrix
+        run: |
+          set -euo pipefail
+          ARCHS='["amd64","arm64"]'
+
+          runner_and_pkgs='
+            (if $arch == "arm64"
+              then {runner: "ubuntu-24.04-arm", qemu_packages: "qemu-system-arm qemu-efi-aarch64"}
+              else {runner: "ubuntu-latest", qemu_packages: "qemu-system-x86 ovmf"}
+            end)'
+
+          DISTROS_JSON=$(ls distros | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          BASE_MATRIX=$(jq -nc --argjson distros "$DISTROS_JSON" --argjson archs "$ARCHS" '
+            {include: [
+              $distros[] as $distro | $archs[] as $arch |
+              {distro: $distro, arch: $arch} + '"$runner_and_pkgs"'
+            ]}')
+          echo "base_matrix=$BASE_MATRIX" >> "$GITHUB_OUTPUT"
+
+          PAIRS_JSON=$(find distros -mindepth 3 -maxdepth 3 -type d -path '*/layers/*' \
+            | sed 's#^distros/##' \
+            | awk -F/ '{printf "{\"distro\":\"%s\",\"layer\":\"%s\"}\n", $1, $3}' \
+            | jq -s -c '.')
+          LAYER_MATRIX=$(jq -nc --argjson pairs "$PAIRS_JSON" --argjson archs "$ARCHS" '
+            {include: [
+              $pairs[] as $p | $archs[] as $arch |
+              {distro: $p.distro, layer: $p.layer, arch: $arch} + '"$runner_and_pkgs"'
+            ]}')
+          echo "layer_matrix=$LAYER_MATRIX" >> "$GITHUB_OUTPUT"
+
+          echo "base matrix:  $BASE_MATRIX"
+          echo "layer matrix: $LAYER_MATRIX"
+
+  build-base:
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.base_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU + EFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Verify KVM is available
+        run: |
+          test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Build astroimg
+        run: go build -o bin/astroimg ./cmd/astroimg
+
+      - name: Run pipeline (headless)
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "${{ matrix.distro }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload base artifact (consumed by layer builds, and downloadable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.distro }}-base-${{ matrix.arch }}
+          path: build/*.qcow2
+          retention-days: 7
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push artifact
+        if: ${{ inputs.push }}
+        run: |
+          ./bin/astroimg push \
+            --distro "${{ matrix.distro }}" \
+            --arch "${{ matrix.arch }}" \
+            --registry ghcr.io \
+            --gh-user "${{ github.repository_owner }}"
+
+  build-layer:
+    needs: [discover, build-base]
+    if: ${{ fromJson(needs.discover.outputs.layer_matrix).include[0] != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.layer_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU + EFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.qemu_packages }}
+
+      - name: Verify KVM is available
+        run: |
+          test -e /dev/kvm && echo "KVM available" || (echo "::error::/dev/kvm not available on this runner, builds would fall back to slow TCG emulation" && exit 1)
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Build astroimg
+        run: go build -o bin/astroimg ./cmd/astroimg
+
+      - name: Download this distro/arch's base artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.distro }}-base-${{ matrix.arch }}
+          path: build
+
+      - name: Run pipeline (headless)
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "${{ matrix.distro }}" \
+            --layer "${{ matrix.layer }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload layer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.distro }}-${{ matrix.layer }}-${{ matrix.arch }}
+          path: build/*${{ matrix.layer }}*.qcow2
+          retention-days: 7
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push artifact
+        if: ${{ inputs.push }}
+        run: |
+          ./bin/astroimg push \
+            --distro "${{ matrix.distro }}" \
+            --layer "${{ matrix.layer }}" \
+            --arch "${{ matrix.arch }}" \
+            --registry ghcr.io \
+            --gh-user "${{ github.repository_owner }}"
