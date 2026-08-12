@@ -326,75 +326,94 @@ somewhere other than the default.
 
 ## Reference & Deep Dive
 
-### How to Retrieve the Golden Image (Downstream Consumption)
+### Downstream Consumption: Pulling and Booting the Image
 
-Because the template is pushed as a raw OCI Artifact, consumers don't need
-Docker to run it -- just the `oras` CLI to pull the raw file(s) straight to
-disk. Every tag pulls to the same fixed filenames, regardless of
-distro/version/layer/arch -- `image.qcow2` always, plus `base.qcow2` too
-when the tag is a non-flattened layer (its `backing_file` already points at
-`base.qcow2`, so it boots as pulled, no rebase step needed):
+Each artifact is pushed as a raw OCI Artifact, not a Docker image, so
+consumers don't need Docker -- just the `oras` CLI to pull the raw file(s)
+straight to disk.
 
-**1. Pull the disk (base image, in this example):**
+Every tag pulls to the same fixed filenames regardless of
+distro/version/layer/arch:
+
+- `image.qcow2` -- always present.
+- `base.qcow2` -- also present for a non-flattened layer tag. Its
+  `backing_file` already points at `base.qcow2`, so it boots as pulled, no
+  rebase step needed.
+
+#### Pull an image
+
 ```bash
-oras pull ghcr.io/YOUR_GITHUB_USERNAME/ubuntu-qcow2-image:24.04-base-arm64
+oras pull ghcr.io/YOUR_USERNAME/ubuntu-qcow2-image:24.04-base-arm64
 # -> image.qcow2
 ```
+
 Pulling a layer tag instead (e.g. `:24.04-docker-arm64`) lands both
 `image.qcow2` (the layer) and `base.qcow2` (what it's backed by) in one
-pull.
+pull. Swap in your own registry/namespace if you pushed somewhere other
+than the default GHCR ref -- see [Publishing an image](#publishing-an-image).
 
-**2. Create a new Test Lab `user-data`:**
-Create a file named `user-data` that creates a new admin user called `labadmin`:
-```yaml
-#cloud-config
-users:
-  - name: labadmin
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    lock_passwd: false
-chpasswd:
-  list: |
-    labadmin:testpassword
-  expire: false
-ssh_pwauth: true
-```
+#### Boot it standalone (example: a throwaway test-lab VM)
 
-**3. Create a new `meta-data`:**
-Create a file named `meta-data`:
-```yaml
-instance-id: test-lab-vm
-local-hostname: test-lab
-```
+Boots a pulled `image.qcow2` directly with `qemu-system-aarch64` on macOS,
+without any `astroimg` tooling -- useful for confirming an image works
+completely outside this repo.
 
-**4. Generate the Cloud-Init ISO & EFI Variables:**
+1. Cloud-init seed file `user-data`, adding an admin user:
 
-Any tool that writes a plain ISO9660 volume labeled `cidata` containing
-exactly those two files works -- e.g. on macOS:
+   ```yaml
+   #cloud-config
+   users:
+     - name: labadmin
+       sudo: ALL=(ALL) NOPASSWD:ALL
+       shell: /bin/bash
+       lock_passwd: false
+   chpasswd:
+     list: |
+       labadmin:testpassword
+     expire: false
+   ssh_pwauth: true
+   ```
 
-```bash
-mkdir -p cidata
-cp user-data meta-data cidata/
-hdiutil makehybrid -iso -joliet -default-volume-name cidata -o lab-cloud-init.iso cidata/
+2. Matching `meta-data`:
 
-# Copy the QEMU EFI variables template so the VM can boot
-cp /opt/homebrew/share/qemu/edk2-arm-vars.fd vars.fd
-```
+   ```yaml
+   instance-id: test-lab-vm
+   local-hostname: test-lab
+   ```
 
-**5. Boot the VM:**
-```bash
-qemu-system-aarch64 \
-    -M virt,highmem=on -accel hvf -cpu host -smp 4 -m 4096 \
-    -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
-    -drive if=pflash,format=raw,file=vars.fd \
-    -drive if=virtio,file=image.qcow2,format=qcow2 \
-    -drive if=virtio,file=lab-cloud-init.iso,format=raw \
-    -smbios type=1,serial=ds=nocloud \
-    -device virtio-gpu-pci -display cocoa,show-cursor=on \
-    -device virtio-mouse-pci -device virtio-keyboard-pci \
-    -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22
-```
-You can now log into the graphical desktop instantly as `labadmin` with the password `testpassword`!
+3. Pack both into an ISO9660 volume labeled `cidata` -- any tool that can
+   write one works, e.g. `hdiutil` on macOS:
+
+   ```bash
+   mkdir -p cidata
+   cp user-data meta-data cidata/
+   hdiutil makehybrid -iso -joliet -default-volume-name cidata -o lab-cloud-init.iso cidata/
+   ```
+
+4. Grab a fresh EFI vars file so the VM has somewhere writable to store its
+   boot variables (Linux path differs by distro, e.g.
+   `/usr/share/AAVMF/AAVMF_VARS.fd` on Debian/Ubuntu):
+
+   ```bash
+   cp /opt/homebrew/share/qemu/edk2-arm-vars.fd vars.fd
+   ```
+
+5. Boot:
+
+   ```bash
+   qemu-system-aarch64 \
+       -M virt,highmem=on -accel hvf -cpu host -smp 4 -m 4096 \
+       -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+       -drive if=pflash,format=raw,file=vars.fd \
+       -drive if=virtio,file=image.qcow2,format=qcow2 \
+       -drive if=virtio,file=lab-cloud-init.iso,format=raw \
+       -smbios type=1,serial=ds=nocloud \
+       -device virtio-gpu-pci -display cocoa,show-cursor=on \
+       -device virtio-mouse-pci -device virtio-keyboard-pci \
+       -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22
+   ```
+
+Log into the graphical desktop as `labadmin` / `testpassword`.
 
 ---
 
