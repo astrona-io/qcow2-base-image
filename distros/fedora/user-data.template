@@ -11,10 +11,13 @@ bootcmd:
   - [ sh, -c, 'echo "  INITIALIZING SYSTEM & INSTALLING BASE PACKAGES" > /dev/tty1' ]
   - [ sh, -c, 'echo "  Please wait 3-5 minutes. The screen will scroll logs." > /dev/tty1' ]
   - [ sh, -c, 'echo "========================================================\n" > /dev/tty1' ]
-  # Workaround for Fedora Bug 2411780 (cloud-init socket piping incompatibilities with nmap-ncat)
-  - [ sh, -c, 'sed -i "s/-W1//g" /usr/lib/systemd/system/cloud-*.service 2>/dev/null || true' ]
-  - [ sh, -c, 'sed -i "s/-W1//g" /lib/systemd/system/cloud-*.service 2>/dev/null || true' ]
-  - [ sh, -c, 'systemctl daemon-reload' ]
+
+# The build VM is thrown away after sysprep -- nothing downstream reads its
+# transient hostname, so skip cc_set_hostname's `hostnamectl` call entirely
+# instead of racing systemd's D-Bus/private-socket readiness this early in
+# boot (this is what was intermittently producing "status: error" with
+# "Failed to connect to system scope bus via local transport").
+preserve_hostname: true
 
 users:
   - name: fedora

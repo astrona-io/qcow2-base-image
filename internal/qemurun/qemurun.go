@@ -1,7 +1,7 @@
 // Package qemurun builds and drives the QEMU VM: process argv construction,
 // waiting for the guest's SSH port, host-key pinning scoped to a
 // project-local known_hosts file (never the user's real ~/.ssh/known_hosts),
-// and detecting "provisioning finished" via `cloud-init status --wait` over
+// and detecting "provisioning finished" by polling `cloud-init status` over
 // SSH instead of a fixed time heuristic. Every external command is invoked
 // with an explicit argv slice (exec.CommandContext) -- nothing is ever
 // built as a shell string.
@@ -287,6 +287,12 @@ func SSHArgs(keyPath, knownHostsFile string, port int, user, host string, remote
 		"-o", "UserKnownHostsFile=" + knownHostsFile,
 		"-o", "StrictHostKeyChecking=yes",
 		"-o", "LogLevel=ERROR",
+		// Without these, a session whose remote end dies without a clean
+		// TCP close (e.g. sshd.service restarting mid-command because a
+		// package_upgrade bumped openssh-server) hangs the local client
+		// forever instead of erroring out -- these bound that to ~15s.
+		"-o", "ServerAliveInterval=5",
+		"-o", "ServerAliveCountMax=3",
 		user + "@" + host,
 	}
 
@@ -306,33 +312,23 @@ func RunSSH(ctx context.Context, keyPath, knownHostsFile string, port int, user,
 	return out, nil
 }
 
-// RunSSHStreaming executes a remote command over SSH, streaming its output
-// live to stdout/stderr instead of buffering it. Used for long-running
-// remote commands (like `cloud-init status --wait`, which itself prints
-// periodic progress) so a multi-minute wait shows activity instead of
-// looking stuck -- this matters most in --headless mode, where there's no
-// GUI console to watch instead.
-func RunSSHStreaming(ctx context.Context, keyPath, knownHostsFile string, port int, user, host string, remoteCmd ...string) error {
-	args := SSHArgs(keyPath, knownHostsFile, port, user, host, remoteCmd...)
-	cmd := exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // argv-only, args are built by SSHArgs from internally-resolved values
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ssh %s: %w", strings.Join(remoteCmd, " "), err)
-	}
-
-	return nil
-}
-
 // WaitForCloudInit first retries a trivial SSH command until authentication
 // succeeds (sshd comes up well before cloud-init has written
 // ssh_authorized_keys, so early auth failures are expected transient
-// state), printing a heartbeat every ~15s, then streams
-// `cloud-init status --wait` live -- cloud-init itself only returns from
-// that once provisioning has actually finished (replacing the old
-// fixed-heuristic "SSH is reachable" proxy), and it prints its own periodic
-// progress while waiting, which streaming surfaces instead of hiding.
+// state), printing a heartbeat every ~15s, then polls `cloud-init status`
+// on a fresh SSH connection every few seconds until it reports done, error,
+// or degraded.
+//
+// This deliberately does NOT stream one long-lived `cloud-init status
+// --wait` session (the old approach): a package_upgrade that bumps
+// openssh-server restarts sshd.service mid-transaction (observed on
+// Fedora, whose cloud image pulls in enough updates to hit this most
+// runs; Ubuntu/openSUSE can hit the same thing whenever their upgrade set
+// happens to include openssh-server), which can silently kill or orphan
+// that persistent session -- the client then has no way to notice
+// provisioning already finished and just hangs until the outer timeout.
+// Reconnecting fresh every poll means a mid-wait sshd restart costs one
+// poll interval, not the whole timeout.
 func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port int, user, host string, timeout time.Duration) error {
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -366,27 +362,62 @@ func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port 
 
 	fmt.Println("SSH ready, waiting for cloud-init to finish provisioning...")
 
-	if err := RunSSHStreaming(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--wait"); err != nil {
-		// cloud-init status --wait's exit code isn't just 0/1: 0 means
-		// done with no issues, 1 means a hard error, but 2 means "done,
-		// but a module hit a recoverable error" (cloud-init calls this
-		// "degraded"). Provisioning did finish in that case -- the guest
-		// booted, packages installed -- so treat it as success and just
-		// surface what was degraded, rather than failing the whole build
-		// over what's often a non-fatal warning.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
-			fmt.Println("warning: cloud-init finished in a degraded state (recoverable errors), continuing. Details:")
+	pollStart := time.Now()
+	lastStatus := ""
 
-			if out, longErr := RunSSH(deadlineCtx, keyPath, knownHostsFile, port, user, host, "cloud-init", "status", "--long"); longErr == nil {
-				fmt.Println(string(out))
+	for attempt := 0; ; attempt++ {
+		attemptCtx, cancelAttempt := context.WithTimeout(deadlineCtx, 15*time.Second)
+		// sudo: /run/cloud-init/cloud.cfg is root-only, so `cloud-init
+		// status` as the unprivileged SSH user fails with a Python
+		// PermissionError that matches none of the cases below -- every
+		// poll would silently look like "still running" forever otherwise.
+		out, err := RunSSH(attemptCtx, keyPath, knownHostsFile, port, user, host, "sudo", "cloud-init", "status")
+
+		cancelAttempt()
+
+		status := strings.TrimSpace(string(out))
+
+		switch {
+		case strings.Contains(status, "status: error"):
+			longOut, _ := RunSSH(deadlineCtx, keyPath, knownHostsFile, port, user, host, "sudo", "cloud-init", "status", "--long")
+			return fmt.Errorf("cloud-init finished with an error:\n%s", longOut)
+		case strings.Contains(status, "status: done"):
+			// A "done" exit can still be non-zero (exit 2) when a module
+			// hit a recoverable error -- cloud-init only surfaces that via
+			// --long's extended_status, never in the short "status:" line
+			// itself. Treat it as success either way (the guest booted and
+			// packages installed) but only pay for --long when something
+			// was actually off.
+			if err != nil {
+				fmt.Println("warning: cloud-init finished in a degraded state (recoverable errors), continuing. Details:")
+
+				if longOut, longErr := RunSSH(deadlineCtx, keyPath, knownHostsFile, port, user, host, "sudo", "cloud-init", "status", "--long"); longErr == nil {
+					fmt.Println(string(longOut))
+				}
 			}
-		} else {
-			return fmt.Errorf("waiting for cloud-init to finish: %w", err)
+
+			return nil
+		}
+
+		lastErr = err
+		if status != "" {
+			lastStatus = status
+		}
+
+		if attempt > 0 && attempt%6 == 0 {
+			fmt.Printf("   ...still waiting for cloud-init to finish (%ds elapsed)\n", int(time.Since(pollStart).Seconds()))
+		}
+
+		select {
+		case <-deadlineCtx.Done():
+			if lastStatus != "" {
+				return fmt.Errorf("cloud-init never finished within %s (last status: %s)", timeout, lastStatus)
+			}
+
+			return fmt.Errorf("cloud-init never finished within %s: %w", timeout, lastErr)
+		case <-time.After(5 * time.Second):
 		}
 	}
-
-	return nil
 }
 
 // GenerateSSHKey creates a new ed25519 keypair at path if one doesn't

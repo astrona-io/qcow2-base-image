@@ -75,6 +75,8 @@ func TestSSHArgs(t *testing.T) {
 		"-p 2222",
 		"-o UserKnownHostsFile=build/known_hosts",
 		"-o StrictHostKeyChecking=yes",
+		"-o ServerAliveInterval=5",
+		"-o ServerAliveCountMax=3",
 		"ubuntu@localhost",
 		"cloud-init status --wait",
 	} {
