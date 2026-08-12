@@ -117,6 +117,17 @@ func ListReleases(distrosRoot, distro string) ([]string, error) {
 	return versions, nil
 }
 
+// ListReleaseDetails returns every entry in distro.yaml's releases: list
+// in full (name, os_version, os_release), in file order.
+func ListReleaseDetails(distrosRoot, distro string) ([]Release, error) {
+	raw, _, err := readDistroYAML(distrosRoot, distro)
+	if err != nil {
+		return nil, err
+	}
+
+	return raw.Releases, nil
+}
+
 // LoadDistro reads and validates distros/<distro>/distro.yaml under
 // distrosRoot, selects the release matching osVersion (or the first entry
 // in releases: when osVersion is empty), and returns the resulting config

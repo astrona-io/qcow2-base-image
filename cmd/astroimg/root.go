@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDistro, "distro", "ubuntu", "distro to build (see distros/)")
-	rootCmd.PersistentFlags().StringVar(&flagOSVersion, "os-version", "", "os_version to build from this distro's releases: list (default: first entry, see 'astroimg list os-versions')")
+	rootCmd.PersistentFlags().StringVar(&flagOSVersion, "os-version", "", "os_version to build from this distro's releases: list (default: first entry, see 'astroimg get os-version')")
 	rootCmd.PersistentFlags().StringVar(&flagLayer, "layer", "", "optional layer to build on top of a finished base image (see layers/)")
 	rootCmd.PersistentFlags().StringVar(&flagArch, "arch", defaultArch(), "target architecture: arm64 or amd64")
 	rootCmd.PersistentFlags().StringVar(&flagBuildDir, "build-dir", "build", "directory for final generated build artifacts")
@@ -67,7 +67,7 @@ func init() {
 		cleanCmd,
 		pipelineCmd,
 		testBootCmd,
-		listCmd,
+		getCmd,
 	)
 }
 
