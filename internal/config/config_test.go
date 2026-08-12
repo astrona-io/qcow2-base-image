@@ -261,7 +261,7 @@ func TestValidateNameAcceptsSaneNames(t *testing.T) {
 
 func TestLoadDistroRejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := LoadDistro(dir, "../escape"); err == nil {
+	if _, _, err := LoadDistro(dir, "../escape", ""); err == nil {
 		t.Fatal("expected error for traversal distro name")
 	}
 }
@@ -274,12 +274,65 @@ func TestLoadDistroRequiresFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(distroDir, "distro.yaml"), []byte("os_version: \"1\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(distroDir, "distro.yaml"), []byte("releases:\n  - os_version: \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, _, err := LoadDistro(root, "incomplete"); err == nil {
+	if _, _, err := LoadDistro(root, "incomplete", ""); err == nil {
 		t.Fatal("expected error for missing required fields")
+	}
+}
+
+func TestLoadDistroSelectsRequestedRelease(t *testing.T) {
+	root := t.TempDir()
+
+	distroDir := filepath.Join(root, "multi")
+	if err := os.MkdirAll(distroDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	yamlContent := "image_variant: server\n" +
+		"image_url_template: \"https://example.com/{{.Release}}\"\n" +
+		"releases:\n" +
+		"  - os_version: \"24.04\"\n" +
+		"    os_release: noble\n" +
+		"  - os_version: \"22.04\"\n" +
+		"    os_release: jammy\n"
+
+	if err := os.WriteFile(filepath.Join(distroDir, "distro.yaml"), []byte(yamlContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := LoadDistro(root, "multi", "")
+	if err != nil {
+		t.Fatalf("LoadDistro (default): %v", err)
+	}
+
+	if cfg.OSVersion != "24.04" || cfg.OSRelease != "noble" {
+		t.Errorf("default release = %q/%q, want 24.04/noble", cfg.OSVersion, cfg.OSRelease)
+	}
+
+	cfg, _, err = LoadDistro(root, "multi", "22.04")
+	if err != nil {
+		t.Fatalf("LoadDistro (22.04): %v", err)
+	}
+
+	if cfg.OSVersion != "22.04" || cfg.OSRelease != "jammy" {
+		t.Errorf("selected release = %q/%q, want 22.04/jammy", cfg.OSVersion, cfg.OSRelease)
+	}
+
+	if _, _, err := LoadDistro(root, "multi", "99.04"); err == nil {
+		t.Fatal("expected error for unknown os-version")
+	}
+
+	versions, err := ListReleases(root, "multi")
+	if err != nil {
+		t.Fatalf("ListReleases: %v", err)
+	}
+
+	want := []string{"24.04", "22.04"}
+	if len(versions) != len(want) || versions[0] != want[0] || versions[1] != want[1] {
+		t.Errorf("ListReleases = %v, want %v", versions, want)
 	}
 }
 

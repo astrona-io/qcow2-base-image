@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/astrona-io/qcow2-base-image/internal/config"
 )
 
 var listCmd = &cobra.Command{
@@ -28,6 +30,22 @@ func init() {
 			RunE: func(_ *cobra.Command, _ []string) error {
 				distroLayersRoot := filepath.Join(distrosRoot, flagDistro, "layers")
 				return listDir(distroLayersRoot)
+			},
+		},
+		&cobra.Command{
+			Use:   "os-versions",
+			Short: "List available OS-VERSION values for --distro (distros/<distro>/distro.yaml releases:)",
+			RunE: func(_ *cobra.Command, _ []string) error {
+				versions, err := config.ListReleases(distrosRoot, flagDistro)
+				if err != nil {
+					return err
+				}
+
+				for _, v := range versions {
+					fmt.Println(v)
+				}
+
+				return nil
 			},
 		},
 	)

@@ -46,9 +46,11 @@ are pinned to a project-local `build/known_hosts` instead.
   checksum verification), `qemurun` (QEMU process, SSH wait, cloud-init
   wait), `orasclient` (push/pull).
 * `distros/<name>/`: per-distro base config -- `user-data.template`,
-  `meta-data`, and `distro.yaml` (version, release codename, image URL
-  template, checksum URL template). Select with `--distro <name>` (default
-  `ubuntu`).
+  `meta-data`, and `distro.yaml` (a `releases:` list of version/release-codename
+  pairs, plus image URL template, checksum URL template). Select the distro
+  with `--distro <name>` (default `ubuntu`) and, when `releases:` has more
+  than one entry, the version with `--os-version <version>` (default: first
+  entry). `astroimg list os-versions --distro <name>` shows what's available.
 * `layers/<name>/`: optional add-on config applied on top of an
   already-built base image instead of a fresh download -- same
   `user-data.template`/`meta-data` shape, but the template only needs the

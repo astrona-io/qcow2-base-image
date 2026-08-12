@@ -17,6 +17,7 @@ const (
 
 var (
 	flagDistro         string
+	flagOSVersion      string
 	flagLayer          string
 	flagArch           string
 	flagBuildDir       string
@@ -39,6 +40,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDistro, "distro", "ubuntu", "distro to build (see distros/)")
+	rootCmd.PersistentFlags().StringVar(&flagOSVersion, "os-version", "", "os_version to build from this distro's releases: list (default: first entry, see 'astroimg list os-versions')")
 	rootCmd.PersistentFlags().StringVar(&flagLayer, "layer", "", "optional layer to build on top of a finished base image (see layers/)")
 	rootCmd.PersistentFlags().StringVar(&flagArch, "arch", defaultArch(), "target architecture: arm64 or amd64")
 	rootCmd.PersistentFlags().StringVar(&flagBuildDir, "build-dir", "build", "directory for final generated build artifacts")
@@ -98,7 +100,7 @@ func headlessOverride(cmd *cobra.Command) *bool {
 // resolveBuild validates --distro/--layer/--arch, loads distros/<distro>/distro.yaml,
 // and computes every derived path/name for this invocation.
 func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error) {
-	cfg, distroDir, err := config.LoadDistro(distrosRoot, flagDistro)
+	cfg, distroDir, err := config.LoadDistro(distrosRoot, flagDistro, flagOSVersion)
 	if err != nil {
 		return config.Resolved{}, cfg, err
 	}

@@ -11,6 +11,10 @@ on:
         description: "Distro to build (see distros/)"
         default: ubuntu
         required: false
+      os_version:
+        description: "os_version to build from the distro's releases: list (default: first entry)"
+        default: ""
+        required: false
       layer:
         description: "Optional layer to build on top of a finished base image (see layers/)"
         default: ""
@@ -65,6 +69,7 @@ jobs:
           ./bin/astroimg pipeline \
             --headless \
             --distro "${{ inputs.distro }}" \
+            --os-version "${{ inputs.os_version }}" \
             --layer "${{ inputs.layer }}" \
             --arch "${{ matrix.arch }}"
 
@@ -84,6 +89,7 @@ jobs:
         run: |
           ./bin/astroimg push \
             --distro "${{ inputs.distro }}" \
+            --os-version "${{ inputs.os_version }}" \
             --layer "${{ inputs.layer }}" \
             --arch "${{ matrix.arch }}" \
             --registry ghcr.io \

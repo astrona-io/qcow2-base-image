@@ -33,10 +33,19 @@ func ValidateName(kind, name string) error {
 	return nil
 }
 
-// DistroConfig is the schema of distros/<name>/distro.yaml.
+// Release is one entry in distro.yaml's releases: list -- a version/release
+// codename pair the pipeline can build against.
+type Release struct {
+	Name      string `yaml:"name"`
+	OSVersion string `yaml:"os_version"`
+	OSRelease string `yaml:"os_release"`
+}
+
+// DistroConfig is the schema of distros/<name>/distro.yaml, with a single
+// Release already selected out of its releases: list (see LoadDistro).
 type DistroConfig struct {
-	OSVersion           string   `yaml:"os_version"`
-	OSRelease           string   `yaml:"os_release"`
+	OSVersion           string
+	OSRelease           string
 	ImageVariant        string   `yaml:"image_variant"`
 	ImageURLTemplate    string   `yaml:"image_url_template"`
 	ChecksumURLTemplate string   `yaml:"checksum_url_template"`
@@ -45,32 +54,114 @@ type DistroConfig struct {
 	SysprepCommands     []string `yaml:"sysprep_commands"`
 }
 
-// LoadDistro reads and validates distros/<distro>/distro.yaml under
-// distrosRoot, returning the parsed config and the distro's directory.
-func LoadDistro(distrosRoot, distro string) (DistroConfig, string, error) {
-	var cfg DistroConfig
+// distroYAML is the raw on-disk shape of distros/<name>/distro.yaml, before
+// a release has been picked out of its releases: list.
+type distroYAML struct {
+	Releases            []Release `yaml:"releases"`
+	ImageVariant        string    `yaml:"image_variant"`
+	ImageURLTemplate    string    `yaml:"image_url_template"`
+	ChecksumURLTemplate string    `yaml:"checksum_url_template"`
+	SSHUser             string    `yaml:"ssh_user"`
+	SSHPassword         string    `yaml:"ssh_password"`
+	SysprepCommands     []string  `yaml:"sysprep_commands"`
+}
+
+func readDistroYAML(distrosRoot, distro string) (distroYAML, string, error) {
+	var raw distroYAML
 	if err := ValidateName("distro", distro); err != nil {
-		return cfg, "", err
+		return raw, "", err
 	}
 
 	dir := filepath.Join(distrosRoot, distro)
 	if err := ensureUnder(distrosRoot, dir); err != nil {
-		return cfg, "", err
+		return raw, "", err
 	}
 
 	path := filepath.Join(dir, "distro.yaml")
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is built from a name already validated + confirmed to stay under distrosRoot (ensureUnder)
 	if err != nil {
-		return cfg, "", fmt.Errorf("reading %s: %w", path, err)
+		return raw, "", fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, "", fmt.Errorf("parsing %s: %w", path, err)
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return raw, "", fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	if cfg.OSVersion == "" || cfg.OSRelease == "" || cfg.ImageVariant == "" || cfg.ImageURLTemplate == "" {
-		return cfg, "", fmt.Errorf("%s: os_version, os_release, image_variant, image_url_template are required", path)
+	if len(raw.Releases) == 0 || raw.ImageVariant == "" || raw.ImageURLTemplate == "" {
+		return raw, "", fmt.Errorf("%s: releases (at least one), image_variant, image_url_template are required", path)
+	}
+
+	for i, rel := range raw.Releases {
+		if rel.OSVersion == "" || rel.OSRelease == "" {
+			return raw, "", fmt.Errorf("%s: releases[%d]: os_version and os_release are required", path, i)
+		}
+	}
+
+	return raw, dir, nil
+}
+
+// ListReleases returns the os_version of every entry in distro.yaml's
+// releases: list, in file order.
+func ListReleases(distrosRoot, distro string) ([]string, error) {
+	raw, _, err := readDistroYAML(distrosRoot, distro)
+	if err != nil {
+		return nil, err
+	}
+
+	versions := make([]string, len(raw.Releases))
+	for i, rel := range raw.Releases {
+		versions[i] = rel.OSVersion
+	}
+
+	return versions, nil
+}
+
+// LoadDistro reads and validates distros/<distro>/distro.yaml under
+// distrosRoot, selects the release matching osVersion (or the first entry
+// in releases: when osVersion is empty), and returns the resulting config
+// and the distro's directory.
+func LoadDistro(distrosRoot, distro, osVersion string) (DistroConfig, string, error) {
+	var cfg DistroConfig
+
+	raw, dir, err := readDistroYAML(distrosRoot, distro)
+	if err != nil {
+		return cfg, "", err
+	}
+
+	rel := raw.Releases[0]
+
+	if osVersion != "" {
+		found := false
+
+		for _, r := range raw.Releases {
+			if r.OSVersion == osVersion {
+				rel = r
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			available := make([]string, len(raw.Releases))
+			for i, r := range raw.Releases {
+				available[i] = r.OSVersion
+			}
+
+			return cfg, "", fmt.Errorf("os-version %q not found for distro %q (available: %s)", osVersion, distro, strings.Join(available, ", "))
+		}
+	}
+
+	cfg = DistroConfig{
+		OSVersion:           rel.OSVersion,
+		OSRelease:           rel.OSRelease,
+		ImageVariant:        raw.ImageVariant,
+		ImageURLTemplate:    raw.ImageURLTemplate,
+		ChecksumURLTemplate: raw.ChecksumURLTemplate,
+		SSHUser:             raw.SSHUser,
+		SSHPassword:         raw.SSHPassword,
+		SysprepCommands:     raw.SysprepCommands,
 	}
 
 	if cfg.SSHUser == "" {
