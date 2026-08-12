@@ -9,12 +9,13 @@ import (
 
 var cleanCmd = &cobra.Command{
 	Use:   "clean",
-	Short: "Remove the entire build directory",
+	Short: "Remove the runtime directory (downloads, instance disks, ISOs, SSH keys/known_hosts)",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		fmt.Printf("removing %s...\n", flagBuildDir)
-		// Nothing to clean in ~/.ssh: unlike the old Makefile, astroimg never
-		// writes VM host keys anywhere but build/known_hosts, so deleting
-		// the build dir is the whole cleanup.
-		return os.RemoveAll(flagBuildDir)
+		fmt.Printf("removing %s...\n", flagRuntimeDir)
+		// build/ holds finished artifacts (the whole point of running the
+		// pipeline); .runtime/ holds everything disposable/intermediate
+		// (downloads, instance disks, ISOs, generated SSH keys, the
+		// project-local known_hosts) -- that's what clean should clear.
+		return os.RemoveAll(flagRuntimeDir)
 	},
 }
