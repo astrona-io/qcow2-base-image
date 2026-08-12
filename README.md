@@ -256,77 +256,73 @@ Default guest credentials match the distro name (`ssh_user`/`ssh_password` in
 `distros/<distro>/distro.yaml`), e.g. `ubuntu`/`ubuntu`, `fedora`/`fedora`,
 `opensuse`/`opensuse`.
 
-### Publishing to GHCR manually (do this once before automating it in CI)
+### Publishing an image
 
-Walk through this by hand first so you know it actually works end to end
-before `build-image.yml` does it unattended:
+Once you have a built (and ideally boot-tested — see `test-boot` above)
+`.qcow2` under `build/`, push it with the `astroimg` CLI:
 
-**1. Build the base:**
-```bash
-astroimg pipeline --distro ubuntu --headless --verbose
-# -> build/ubuntu-24.04-desktop-arm64.qcow2
-```
+#### 1. Authenticate
 
-**2. Build the layer on top of it:**
-```bash
-astroimg pipeline --distro ubuntu --layer docker --headless --verbose
-# -> build/ubuntu-24.04-desktop-docker-arm64.qcow2
-```
+`astroimg` shells out to [`oras`](https://oras.land) for push/pull. Give it
+credentials one of two ways:
 
-**3. Sanity-check locally before touching the registry:**
-```bash
-astroimg test-boot --distro ubuntu --layer docker
-# forks a disposable 3rd file, boots it, gives you SSH -- Ctrl-C when
-# satisfied, the fork deletes itself, the artifact is untouched
-```
+- **`--username`/`-u` and `--password`/`-p` on the command itself** — passed
+  straight through to `oras`'s own `-u`/`--password-stdin` flags (the
+  password is piped over stdin, never put on argv, so it can't leak through
+  `ps` or shell history):
 
-**4. Log in to GHCR** (needs a GitHub token with `write:packages` scope):
-```bash
-echo $GITHUB_TOKEN | oras login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
+  ```bash
+  astroimg push --distro ubuntu --username YOUR_USERNAME --password "$GITHUB_TOKEN"
+  ```
 
-**5. Push both artifacts.** The layer push bundles the base qcow2 into its
-own manifest automatically (so it's pullable/bootable standalone), but push
-the base under its own tag too, for consumers who just want the base:
+- **A prior `oras login`**, if you'd rather not pass credentials on every
+  `astroimg` invocation — leave `--username`/`--password` unset and
+  `astroimg` relies on whatever `oras` already has cached:
+
+  ```bash
+  echo $GITHUB_TOKEN | oras login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+  ```
+
+The default registry is **GHCR** (`ghcr.io`), and a GitHub token needs the
+`write:packages` scope. Publishing somewhere else instead (Docker Hub, a
+private/self-hosted registry, ECR, etc.) works the same way — just point
+`--registry` (see step 2) and your credentials at that registry's
+host/username/password instead.
+
+#### 2. Push both artifacts
+
+The layer push bundles the base qcow2 into its own manifest automatically
+(so it's pullable/bootable standalone), but push the base under its own tag
+too, for consumers who just want the base:
+
 ```bash
 astroimg push --distro ubuntu
 astroimg push --distro ubuntu --layer docker
 ```
-Default ref is
-`ghcr.io/<git-config-user.name>/<distro>-qcow2-image:<os-version>-<layer-or-"base">-<arch>`
-(e.g. `ghcr.io/astrona-io/ubuntu-qcow2-image:24.04-docker-arm64`) --
-override the namespace with `--gh-user` if that's wrong, `--registry` if
-you're not using GHCR.
 
-**6. Verify what's actually sitting in the registry**, not just your local
-files -- this pulls the layer artifact fresh (base included) and boot-tests
-the result:
+By default this pushes to GHCR under
+`ghcr.io/<git-config-user.name>/<distro>-qcow2-image:<os-version>-<layer-or-"base">-<arch>`
+(e.g. `ghcr.io/astrona-io/ubuntu-qcow2-image:24.04-docker-arm64`). Two flags
+let you push somewhere else entirely:
+
+- `--registry` — registry host, e.g. `--registry registry.example.com` (default `ghcr.io`)
+- `--username`/`-u` — namespace/org/username under that registry, and login username when `--password` is set (default: this repo's GitHub org from `git remote origin`, then your `gh` CLI login)
+
+```bash
+astroimg push --distro ubuntu --registry registry.example.com --username myteam --password "$REGISTRY_PASSWORD"
+```
+
+#### 3. Verify what's actually in the registry
+
+Not just your local files — this pulls the layer artifact fresh (base
+included) and boot-tests the result:
+
 ```bash
 astroimg test-oci --distro ubuntu --layer docker
 ```
 
-**7. Package visibility:** a freshly-pushed GHCR package defaults to
-**private**. `test-oci` still works (it pulls using your own logged-in
-credentials), but anyone else pulling it needs the package made public (or
-granted access) in the package's settings on github.com.
-
-Once steps 1-6 work manually, `build-image.yml` (below) automates exactly
-this same sequence unattended.
-
-### Running in CI
-
-`.github/workflows/build-image.yml` runs the same `astroimg pipeline`
-headlessly on GitHub-hosted runners (native `arm64` and `amd64` runners, so
-both legs get real KVM acceleration -- no slow TCG emulation). It's
-`workflow_dispatch`-only by default since a full desktop install is slow;
-wire up a schedule/push trigger yourself if you want that tradeoff. Trigger
-it from the Actions tab, or:
-
-```bash
-gh workflow run build-image.yml -f distro=ubuntu -f layer= -f push=true
-```
-
----
+Pass the same `--registry`/`--username`/`--password` here if you pushed
+somewhere other than the default.
 
 ## Reference & Deep Dive
 

@@ -118,4 +118,4 @@ jobs:
             --layer "${{ inputs.layer }}" \
             --arch "${{ matrix.arch }}" \
             --registry ghcr.io \
-            --gh-user "${{ github.repository_owner }}"
+            --username "${{ github.repository_owner }}"

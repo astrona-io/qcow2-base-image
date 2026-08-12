@@ -88,7 +88,7 @@ func linkOrCopy(src, dst string) error {
 }
 
 // gitConfigUserNameOrDefault resolves a default OCI registry namespace when
-// --gh-user isn't passed, in order of preference:
+// --username isn't passed, in order of preference:
 //  1. This repo's own GitHub org/user, parsed from `git remote get-url
 //     origin` -- the artifact naturally belongs with whoever owns the repo
 //     that builds it, not whoever happens to be running the build.

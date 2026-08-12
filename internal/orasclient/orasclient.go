@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // CheckInstalled returns an actionable error if the oras CLI isn't on PATH.
@@ -19,6 +20,32 @@ func CheckInstalled() error {
 	}
 
 	return nil
+}
+
+// Credentials are optional per-invocation registry credentials, passed
+// straight through to oras's own -u/-p flags as an alternative to a
+// separate 'oras login' beforehand. Password goes over --password-stdin
+// (piped via cmd.Stdin), never as an argv value, so it can't leak through
+// 'ps' or shell history.
+type Credentials struct {
+	Username string
+	Password string
+}
+
+// args returns the oras flags for these credentials. When Password is set,
+// the caller must also set the resulting *exec.Cmd's Stdin to
+// strings.NewReader(c.Password) -- see credArgs.
+func (c Credentials) args() []string {
+	var args []string
+	if c.Username != "" {
+		args = append(args, "--username", c.Username)
+	}
+
+	if c.Password != "" {
+		args = append(args, "--password-stdin")
+	}
+
+	return args
 }
 
 // File is one blob to attach to a pushed OCI artifact manifest. Name is
@@ -44,8 +71,10 @@ type File struct {
 // package to the repo -- and, for a package that doesn't already exist,
 // makes it inherit that repo's visibility (public repo -> public package)
 // instead of defaulting to private.
-func Push(ctx context.Context, image, dir string, files []File, annotations map[string]string) error {
+func Push(ctx context.Context, image, dir string, files []File, annotations map[string]string, creds Credentials) error {
 	args := []string{"push", image}
+	args = append(args, creds.args()...)
+
 	for k, v := range annotations {
 		args = append(args, "--annotation", k+"="+v)
 	}
@@ -57,8 +86,12 @@ func Push(ctx context.Context, image, dir string, files []File, annotations map[
 	cmd := exec.CommandContext(ctx, "oras", args...) //nolint:gosec // argv-only, all values are internally constructed, not raw user input
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
-
 	cmd.Stderr = os.Stderr
+
+	if creds.Password != "" {
+		cmd.Stdin = strings.NewReader(creds.Password)
+	}
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("oras push %s: %w", image, err)
 	}
@@ -67,15 +100,22 @@ func Push(ctx context.Context, image, dir string, files []File, annotations map[
 }
 
 // Pull downloads image's artifact contents into outDir.
-func Pull(ctx context.Context, image, outDir string) error {
+func Pull(ctx context.Context, image, outDir string, creds Credentials) error {
 	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		return fmt.Errorf("creating %s: %w", outDir, err)
 	}
 
-	cmd := exec.CommandContext(ctx, "oras", "pull", image, "-o", outDir) //nolint:gosec // argv-only, image/outDir are internally constructed, not raw user input
-	cmd.Stdout = os.Stdout
+	args := []string{"pull", image, "-o", outDir}
+	args = append(args, creds.args()...)
 
+	cmd := exec.CommandContext(ctx, "oras", args...) //nolint:gosec // argv-only, image/outDir are internally constructed, not raw user input
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	if creds.Password != "" {
+		cmd.Stdin = strings.NewReader(creds.Password)
+	}
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("oras pull %s: %w", image, err)
 	}

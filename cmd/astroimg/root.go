@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/astrona-io/qcow2-base-image/internal/config"
+	"github.com/astrona-io/qcow2-base-image/internal/orasclient"
 	"github.com/astrona-io/qcow2-base-image/internal/platform"
 )
 
@@ -25,7 +26,8 @@ var (
 	flagLayerBaseImage string
 	flagSSHPort        int
 	flagRegistry       string
-	flagGHUser         string
+	flagUsername       string
+	flagPassword       string
 	flagVerbose        bool
 	flagFlatten        bool
 	flagDryRun         bool
@@ -48,7 +50,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagLayerBaseImage, "layer-base-image", "", "override the base image a layer boots from (default: this distro's finished non-layer image)")
 	rootCmd.PersistentFlags().IntVar(&flagSSHPort, "ssh-port", 2222, "host port forwarded to the guest's SSH port")
 	rootCmd.PersistentFlags().StringVar(&flagRegistry, "registry", "ghcr.io", "OCI registry for push/test-oci")
-	rootCmd.PersistentFlags().StringVar(&flagGHUser, "gh-user", "", "registry namespace/org for push/test-oci (default: this repo's GitHub org from 'git remote origin', then 'gh' CLI login)")
+	rootCmd.PersistentFlags().StringVarP(&flagUsername, "username", "u", "", "registry namespace/org/username for push/test-oci, and login username when --password is set (default: this repo's GitHub org from 'git remote origin', then 'gh' CLI login)")
+	rootCmd.PersistentFlags().StringVarP(&flagPassword, "password", "p", "", "registry login password/token for push/test-oci (default: none -- relies on a prior 'oras login')")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "print the QEMU command and exit without starting the VM")
@@ -139,12 +142,19 @@ func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error
 
 // ociImage builds the OCI artifact reference used by push/test-oci.
 func ociImage(r config.Resolved) string {
-	ghUser := flagGHUser
-	if ghUser == "" {
-		ghUser = gitConfigUserNameOrDefault()
+	username := flagUsername
+	if username == "" {
+		username = gitConfigUserNameOrDefault()
 	}
 
-	return config.OCIImage(flagRegistry, ghUser, r.OCIRepo, r.OCITag)
+	return config.OCIImage(flagRegistry, username, r.OCIRepo, r.OCITag)
+}
+
+// ociCredentials builds the orasclient.Credentials passed to push/pull from
+// --username/--password (both optional; empty means "rely on a prior 'oras
+// login'").
+func ociCredentials() orasclient.Credentials {
+	return orasclient.Credentials{Username: flagUsername, Password: flagPassword}
 }
 
 // ociSourceAnnotations builds the OCI manifest annotations set on push.

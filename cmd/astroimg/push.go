@@ -91,7 +91,7 @@ var pushCmd = &cobra.Command{
 		image := ociImage(r)
 		fmt.Printf("pushing %s to %s...\n", finalPath, image)
 
-		if err := orasclient.Push(cmd.Context(), image, stageDir, files, ociSourceAnnotations(r.FinalImageName)); err != nil {
+		if err := orasclient.Push(cmd.Context(), image, stageDir, files, ociSourceAnnotations(r.FinalImageName), ociCredentials()); err != nil {
 			return err
 		}
 

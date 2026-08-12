@@ -38,7 +38,7 @@ with no rebase needed.`,
 		image := ociImage(r)
 		fmt.Printf("pulling %s...\n", image)
 
-		if err := orasclient.Pull(ctx, image, r.TestExtractDir); err != nil {
+		if err := orasclient.Pull(ctx, image, r.TestExtractDir, ociCredentials()); err != nil {
 			return fmt.Errorf("did you run 'astroimg push' first? %w", err)
 		}
 

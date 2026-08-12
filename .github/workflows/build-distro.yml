@@ -139,7 +139,7 @@ jobs:
             --distro "${{ inputs.distro }}" \
             --arch "${{ matrix.arch }}" \
             --registry ghcr.io \
-            --gh-user "${{ github.repository_owner }}"
+            --username "${{ github.repository_owner }}"
 
   layers:
     needs: [discover-layers, base]
@@ -213,4 +213,4 @@ jobs:
             --layer "${{ matrix.layer }}" \
             --arch "${{ matrix.arch }}" \
             --registry ghcr.io \
-            --gh-user "${{ github.repository_owner }}"
+            --username "${{ github.repository_owner }}"
