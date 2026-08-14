@@ -1,0 +1,102 @@
+#cloud-config
+
+# Layer: lfcs. Applied on top of a finished base image (fresh instance-id,
+# so cloud-init re-runs even though the disk was already sysprepped).
+
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+# Base image already created the primary user; re-declaring ssh_authorized_keys
+# re-injects a fresh key since sysprep wiped the old one.
+users:
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${SSH_KEY}
+
+package_update: true
+
+packages:
+  # Essential Commands & Diagnostics
+  - git
+  - tree
+  - htop
+  - tmux
+  - screen
+  - sysstat
+  - vim
+  - nano
+  - bash-completion
+
+  # Storage & Filesystem Management (Domain 3)
+  - lvm2
+  - xfsprogs
+  - dosfstools
+  - nfs-common
+  - autofs
+
+  # Networking, Time Sync & Firewalls (Domain 2)
+  - network-manager
+  - firewalld
+  - chrony
+  - bind9-dnsutils
+  - iputils-ping
+  - traceroute
+
+  # Containers & Virtualization (Domain 1)
+  - podman
+  - podman-docker
+  - docker.io
+  - qemu-kvm
+  - libvirt-daemon-system
+  - libvirt-clients
+  - bridge-utils
+  - virtinst
+
+  # Security, Users & Groups (Domain 5)
+  - acl
+  - apparmor-utils
+  - ldap-utils
+
+runcmd:
+  # Enable and start Docker
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+
+  # Enable and start NetworkManager for nmcli practice
+  - systemctl enable NetworkManager
+  - systemctl start NetworkManager
+
+  # Enable chrony
+  - systemctl enable chrony
+  - systemctl start chrony
+
+  # Enable autofs for automounting practice
+  - systemctl enable autofs
+  - systemctl start autofs
+
+  # Prepare MOTD for practice environment
+  - |
+    cat << 'EOF' > /etc/update-motd.d/99-lfcs-practice
+    #!/bin/sh
+    echo "======================================================================"
+    echo "  WELCOME TO THE LFCS EXAM PREPARATION ENVIRONMENT"
+    echo "======================================================================"
+    echo " This image is customized with utilities matching the Linux Foundation"
+    echo " Certified System Administrator (LFCS) domains."
+    echo ""
+    echo " Installed domains & tools:"
+    echo "  - Storage:       lvm2, xfsprogs, autofs, nfs-common"
+    echo "  - Network:       network-manager (nmcli), firewalld, chrony"
+    echo "  - Containers:    podman, podman-docker, docker.io"
+    echo "  - Virtualization: qemu-kvm, libvirt-daemon, virtinst"
+    echo "  - Commands:      git, htop, tree, sysstat (sar, iostat), acl (setfacl)"
+    echo ""
+    echo " Remember: LFCS is 100% hands-on. PERSISTENCE is key!"
+    echo " Ensure all firewalls, mounts (/etc/fstab), and services survive a reboot."
+    echo "======================================================================"
+    EOF
+    chmod +x /etc/update-motd.d/99-lfcs-practice
+
+# No power_state reboot here on purpose -- see distros/ubuntu/user-data.template
+# for why: it would race astroimg pipeline's automated post-cloud-init sysprep.
