@@ -44,9 +44,9 @@ packages:
 
   # Containers & Virtualization (Domain 1)
   - podman
-  - podman-docker
   - docker.io
-  - qemu-kvm
+  - qemu-system-arm
+  - qemu-system-x86
   - libvirt-daemon-system
   - libvirt-clients
   - bridge-utils
@@ -88,8 +88,8 @@ runcmd:
     echo " Installed domains & tools:"
     echo "  - Storage:       lvm2, xfsprogs, autofs, nfs-common"
     echo "  - Network:       network-manager (nmcli), firewalld, chrony"
-    echo "  - Containers:    podman, podman-docker, docker.io"
-    echo "  - Virtualization: qemu-kvm, libvirt-daemon, virtinst"
+    echo "  - Containers:    podman, docker.io"
+    echo "  - Virtualization: qemu-system, libvirt-daemon, virtinst"
     echo "  - Commands:      git, htop, tree, sysstat (sar, iostat), acl (setfacl)"
     echo ""
     echo " Remember: LFCS is 100% hands-on. PERSISTENCE is key!"
