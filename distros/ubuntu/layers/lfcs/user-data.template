@@ -26,13 +26,24 @@ packages:
   - vim
   - nano
   - bash-completion
+  - python3
+  - ca-certificates
+  - kmod
+
+  # Remote Access
+  - openssh-server
+  - openssh-client
 
   # Storage & Filesystem Management (Domain 3)
   - lvm2
+  - mdadm
   - xfsprogs
   - dosfstools
   - nfs-common
+  - nfs-kernel-server
   - autofs
+  - sshfs
+  - quota
 
   # Networking, Time Sync & Firewalls (Domain 2)
   - network-manager
@@ -60,15 +71,35 @@ packages:
 
   # Security, Users & Groups (Domain 5)
   - acl
+  - apparmor
   - apparmor-utils
   - ldap-utils
   - sshpass
+
+  # Build & package management tooling (used across ATS002 labs/playgrounds)
+  - build-essential
+  - cron
+  - gnupg
+  - reprepro
+  - dpkg-dev
+  - ftp
+  - cowsay
+  - python3-pip
+  - python3-venv
+  - python3-dev
+  - python3-setuptools
+  - python3-wheel
 
   # Traffic generation & packet inspection (used across ATS003 labs/playgrounds)
   - ncat
   - socat
   - tcpdump
   - nginx
+
+  # I/O & process diagnostics (used across ATS004 labs/playgrounds)
+  - iotop
+  - lsof
+  - fio
 
 runcmd:
   # Enable and start Docker
@@ -99,14 +130,15 @@ runcmd:
     echo " Certified System Administrator (LFCS) domains."
     echo ""
     echo " Installed domains & tools:"
-    echo "  - Storage:       lvm2, xfsprogs, autofs, nfs-common"
+    echo "  - Storage:       lvm2, mdadm, xfsprogs, autofs, nfs-common,"
+    echo "                   nfs-kernel-server, sshfs, quota"
     echo "  - Network:       network-manager (nmcli), netplan.io, firewalld, nftables,"
     echo "                   chrony, bind9 (+ bind9utils, bind9-dnsutils), ethtool,"
     echo "                   ifenslave, nginx"
     echo "  - Containers:    podman, docker.io"
     echo "  - Virtualization: qemu-system, libvirt-daemon, virtinst"
     echo "  - Commands:      git, htop, tree, sysstat (sar, iostat), acl (setfacl)"
-    echo "  - Diagnostics:   ncat, socat, tcpdump, sshpass"
+    echo "  - Diagnostics:   ncat, socat, tcpdump, sshpass, iotop, lsof, fio"
     echo ""
     echo " Remember: LFCS is 100% hands-on. PERSISTENCE is key!"
     echo " Ensure all firewalls, mounts (/etc/fstab), and services survive a reboot."
