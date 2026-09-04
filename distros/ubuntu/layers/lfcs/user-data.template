@@ -36,11 +36,17 @@ packages:
 
   # Networking, Time Sync & Firewalls (Domain 2)
   - network-manager
+  - netplan.io
   - firewalld
+  - nftables
   - chrony
+  - bind9
+  - bind9utils
   - bind9-dnsutils
   - iputils-ping
   - traceroute
+  - ethtool
+  - ifenslave
 
   # Containers & Virtualization (Domain 1)
   - podman
@@ -56,6 +62,13 @@ packages:
   - acl
   - apparmor-utils
   - ldap-utils
+  - sshpass
+
+  # Traffic generation & packet inspection (used across ATS003 labs/playgrounds)
+  - ncat
+  - socat
+  - tcpdump
+  - nginx
 
 runcmd:
   # Enable and start Docker
@@ -87,10 +100,13 @@ runcmd:
     echo ""
     echo " Installed domains & tools:"
     echo "  - Storage:       lvm2, xfsprogs, autofs, nfs-common"
-    echo "  - Network:       network-manager (nmcli), firewalld, chrony"
+    echo "  - Network:       network-manager (nmcli), netplan.io, firewalld, nftables,"
+    echo "                   chrony, bind9 (+ bind9utils, bind9-dnsutils), ethtool,"
+    echo "                   ifenslave, nginx"
     echo "  - Containers:    podman, docker.io"
     echo "  - Virtualization: qemu-system, libvirt-daemon, virtinst"
     echo "  - Commands:      git, htop, tree, sysstat (sar, iostat), acl (setfacl)"
+    echo "  - Diagnostics:   ncat, socat, tcpdump, sshpass"
     echo ""
     echo " Remember: LFCS is 100% hands-on. PERSISTENCE is key!"
     echo " Ensure all firewalls, mounts (/etc/fstab), and services survive a reboot."
