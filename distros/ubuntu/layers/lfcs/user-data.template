@@ -102,6 +102,13 @@ packages:
   - fio
 
 runcmd:
+  # nftables package auto-enables nftables.service on install, which loads
+  # /etc/nftables.conf's stock ruleset (policy drop on input, no ssh accept).
+  # That blocks new SSH connections on boot. Disable the service so the
+  # package/binary are available for LFCS practice but nothing auto-applies
+  # a blocking ruleset; students enable it themselves when practicing.
+  - systemctl disable --now nftables
+
   # Enable and start Docker
   - systemctl enable docker
   - systemctl start docker
