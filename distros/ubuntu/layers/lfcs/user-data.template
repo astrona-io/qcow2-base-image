@@ -102,29 +102,36 @@ packages:
   - fio
 
 runcmd:
-  # nftables package auto-enables nftables.service on install, which loads
-  # /etc/nftables.conf's stock ruleset (policy drop on input, no ssh accept).
-  # That blocks new SSH connections on boot. Disable the service so the
-  # package/binary are available for LFCS practice but nothing auto-applies
-  # a blocking ruleset; students enable it themselves when practicing.
-  - systemctl disable --now nftables
+  # --- Services OFF by default ----------------------------------------------
+  # Every daemon below ships installed (so the package and its tooling are
+  # there for practice) but is disabled + stopped, so a fresh VM boots fast
+  # and clean: nothing races sshd during boot, and no firewall auto-applies a
+  # blocking ruleset (nftables' stock /etc/nftables.conf is policy-drop on
+  # input with no ssh accept; firewalld/ufw default-deny inbound too).
+  # Any lab or playground that needs one of these turns it on itself with
+  #   sudo systemctl enable --now <svc>
+  # and adds only the rules that task requires.
+  - systemctl disable --now nftables 2>/dev/null || true
+  - systemctl disable --now firewalld 2>/dev/null || true
+  - systemctl disable --now ufw 2>/dev/null || true
+  - systemctl disable --now nginx 2>/dev/null || true
+  - systemctl disable --now named bind9 2>/dev/null || true
+  - systemctl disable --now docker docker.socket containerd 2>/dev/null || true
+  - systemctl disable --now libvirtd libvirt-guests 2>/dev/null || true
+  - systemctl disable --now virtlogd.socket virtlockd.socket 2>/dev/null || true
+  - systemctl disable --now podman-auto-update.timer podman-restart.service 2>/dev/null || true
 
-  # Enable and start Docker
-  - systemctl enable docker
-  - systemctl start docker
+  # docker group exists from the docker.io package; add the user now so a
+  # later `systemctl enable --now docker` needs no re-login.
   - usermod -aG docker ubuntu
 
-  # Enable and start NetworkManager for nmcli practice
-  - systemctl enable NetworkManager
-  - systemctl start NetworkManager
-
-  # Enable chrony
-  - systemctl enable chrony
-  - systemctl start chrony
-
-  # Enable autofs for automounting practice
-  - systemctl enable autofs
-  - systemctl start autofs
+  # --- Services ON: part of the base environment itself --------------------
+  # NetworkManager: nmcli practice, and it manages the mgmt link on some
+  # configs. chrony: correct time everywhere (NTP labs reconfigure it
+  # themselves). autofs: automount practice.
+  - systemctl enable --now NetworkManager
+  - systemctl enable --now chrony
+  - systemctl enable --now autofs
 
   # Prepare MOTD for practice environment
   - |
@@ -146,6 +153,10 @@ runcmd:
     echo "  - Virtualization: qemu-system, libvirt-daemon, virtinst"
     echo "  - Commands:      git, htop, tree, sysstat (sar, iostat), acl (setfacl)"
     echo "  - Diagnostics:   ncat, socat, tcpdump, sshpass, iotop, lsof, fio"
+    echo ""
+    echo " Firewall (nftables, firewalld, ufw), web (nginx), DNS (bind9), and"
+    echo " container (docker, podman, libvirt) services are INSTALLED but OFF by"
+    echo " default. Enable what a task needs:  sudo systemctl enable --now <svc>"
     echo ""
     echo " Remember: LFCS is 100% hands-on. PERSISTENCE is key!"
     echo " Ensure all firewalls, mounts (/etc/fstab), and services survive a reboot."
