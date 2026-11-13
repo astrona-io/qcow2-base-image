@@ -241,6 +241,13 @@ whether `/dev/kvm` is usable and sizes `--cloud-init-timeout` to match
 (`90m` on KVM, `240m` under TCG); jobs cap at `timeout-minutes: 350`, just
 under the hosted-runner 6h limit.
 
+Pushing uses the `GHCR_TOKEN` repository secret when set (a PAT with
+`write:packages`; set the `GHCR_USERNAME` repository variable to its
+owner), else the workflow's `GITHUB_TOKEN`. `GITHUB_TOKEN` only works if
+this repo has **Write** under the package's *Manage Actions access*
+settings -- a package first created by a local push doesn't, and the push
+fails with `denied: requested access to the resource is denied`.
+
 ### Build and push
 
 `astroimg push` only uploads an existing artifact. It does not build the image.

@@ -110,10 +110,16 @@ jobs:
 
       - name: Log in to registry
         if: ${{ inputs.push }}
+        # GITHUB_TOKEN can only push to a GHCR package this repo has been
+        # granted Write on (package settings -> Manage Actions access). A
+        # package first created by a local push has no such grant, so the
+        # push fails with "denied". Set a GHCR_TOKEN secret (PAT with
+        # write:packages, plus a GHCR_USERNAME variable for its owner) to
+        # push with that instead; otherwise fall back to GITHUB_TOKEN.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_ACTOR: ${{ github.actor }}
-        run: echo "$GH_TOKEN" | oras login ghcr.io -u "$GH_ACTOR" --password-stdin
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ vars.GHCR_USERNAME || github.actor }}
+        run: echo "$REGISTRY_TOKEN" | oras login ghcr.io -u "$REGISTRY_USER" --password-stdin
 
       - name: Push artifact
         if: ${{ inputs.push }}
@@ -173,10 +179,16 @@ jobs:
 
       - name: Log in to registry
         if: ${{ inputs.push }}
+        # GITHUB_TOKEN can only push to a GHCR package this repo has been
+        # granted Write on (package settings -> Manage Actions access). A
+        # package first created by a local push has no such grant, so the
+        # push fails with "denied". Set a GHCR_TOKEN secret (PAT with
+        # write:packages, plus a GHCR_USERNAME variable for its owner) to
+        # push with that instead; otherwise fall back to GITHUB_TOKEN.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_ACTOR: ${{ github.actor }}
-        run: echo "$GH_TOKEN" | oras login ghcr.io -u "$GH_ACTOR" --password-stdin
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ vars.GHCR_USERNAME || github.actor }}
+        run: echo "$REGISTRY_TOKEN" | oras login ghcr.io -u "$REGISTRY_USER" --password-stdin
 
       - name: Push artifact
         if: ${{ inputs.push }}
