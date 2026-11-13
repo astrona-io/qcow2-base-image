@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,9 @@ var (
 	flagVerbose        bool
 	flagFlatten        bool
 	flagDryRun         bool
+
+	flagCloudInitTimeout time.Duration
+	flagHostKeyTimeout   time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -55,6 +59,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "print the QEMU command and exit without starting the VM")
+	rootCmd.PersistentFlags().DurationVar(&flagCloudInitTimeout, "cloud-init-timeout", 90*time.Minute, "max wait for cloud-init to finish provisioning (raise for TCG software emulation, e.g. 300m)")
+	rootCmd.PersistentFlags().DurationVar(&flagHostKeyTimeout, "hostkey-timeout", 20*time.Minute, "max wait for the guest's SSH host key on first boot")
 	rootCmd.PersistentFlags().Bool("headless", false, "run QEMU without a GUI window (default: auto-detect via $CI / host OS)")
 
 	rootCmd.AddCommand(
@@ -116,6 +122,14 @@ func resolveBuild(_ *cobra.Command) (config.Resolved, config.DistroConfig, error
 	}
 
 	if err := platform.ValidateArch(flagArch); err != nil {
+		return config.Resolved{}, cfg, err
+	}
+
+	if err := config.ValidateTimeout("cloud-init-timeout", flagCloudInitTimeout); err != nil {
+		return config.Resolved{}, cfg, err
+	}
+
+	if err := config.ValidateTimeout("hostkey-timeout", flagHostKeyTimeout); err != nil {
 		return config.Resolved{}, cfg, err
 	}
 

@@ -35,6 +35,20 @@ type Config struct {
 	SSHPort       int // default 2222
 	Headless      bool
 	SerialLogPath string // only used when Headless
+	QGASocketPath string // host-side unix socket for qemu-guest-agent; empty = null backend
+}
+
+// qgaChardev returns the -chardev spec backing the guest's
+// org.qemu.guest_agent.0 port. qemu-ga speaks its own JSON protocol, so the
+// host side must be a plain socket (or null), not the SPICE qemu-vdagent
+// clipboard backend. A null backend still makes the virtio port appear in
+// the guest, so qemu-guest-agent.service starts either way.
+func qgaChardev(socketPath string) string {
+	if socketPath == "" {
+		return "null,id=qga0"
+	}
+
+	return "socket,id=qga0,path=" + socketPath + ",server=on,wait=off"
 }
 
 // BuildArgs constructs the qemu-system-* argv (excluding the binary name
@@ -83,8 +97,8 @@ func BuildArgs(cfg Config) []string {
 		// If these are missing, systemctl start qemu-guest-agent blocks indefinitely
 		// waiting for /dev/virtio-ports/org.qemu.guest_agent.0 to appear.
 		"-device", "virtio-serial",
-		"-chardev", "qemu-vdagent,id=qemu_vdagent",
-		"-device", "virtserialport,chardev=qemu_vdagent,name=org.qemu.guest_agent.0",
+		"-chardev", qgaChardev(cfg.QGASocketPath),
+		"-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
 	)
 
 	if cfg.Headless {

@@ -4,6 +4,9 @@ name: Build golden image
 # 5-10+ minutes and consumes Actions minutes, so this deliberately doesn't
 # run on every push. Wire up a schedule/push trigger yourself if you want
 # that tradeoff.
+#
+# Workflow inputs are passed to `run:` scripts through env: rather than
+# interpolated inline with ${{ }}, so a crafted input can't inject shell.
 on:
   workflow_dispatch:
     inputs:
@@ -16,11 +19,20 @@ on:
         default: ""
         required: false
       layer:
-        description: "Optional layer to build on top of a finished base image (see layers/)"
+        description: "Optional layer to build (see distros/<distro>/layers/). Its base is built first in the same job."
         default: ""
         required: false
+      arch:
+        description: "Architecture(s) to build"
+        type: choice
+        options: [all, amd64, arm64]
+        default: all
       push:
-        description: "Push the built artifact to the registry"
+        description: "Push the built artifact (the layer, if set, else the base) to the registry"
+        type: boolean
+        default: false
+      push_base:
+        description: "When building a layer, also push the base image it was built on"
         type: boolean
         default: false
 
@@ -29,74 +41,73 @@ permissions:
   packages: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build arch matrix
+        id: matrix
+        env:
+          ARCH: ${{ inputs.arch }}
+        run: |
+          set -euo pipefail
+          MATRIX=$(jq -nc --arg want "$ARCH" '
+            {include: [
+              {arch: "amd64", runner: "ubuntu-latest"},
+              {arch: "arm64", runner: "ubuntu-24.04-arm"}
+            ] | map(select($want == "all" or .arch == $want))}')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "matrix: $MATRIX"
+
   build:
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            qemu_packages: qemu-system-x86 ovmf
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            qemu_packages: qemu-system-arm qemu-efi-aarch64
-
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
+    # Hosted runners hard-stop at 360m; stay under it so a hung VM fails
+    # with astroimg's own timeout error instead of a silent runner kill.
+    timeout-minutes: 350
+    env:
+      DISTRO: ${{ inputs.distro }}
+      OS_VERSION: ${{ inputs.os_version }}
+      LAYER: ${{ inputs.layer }}
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v7
+      - name: Set up build host
+        id: setup
+        uses: ./.github/actions/setup-build
         with:
-          go-version: "1.26"
+          arch: ${{ matrix.arch }}
 
-      - name: Install QEMU + EFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.qemu_packages }}
-
-      - name: Enable KVM group perms
-        # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
-        # ship /dev/kvm with permissions the runner user can use out of the
-        # box -- this udev rule opens it up (0666) so the check below (and
-        # QEMU itself) can use it instead of falling back to TCG. Best
-        # effort, not fatal here: nested-virt support isn't guaranteed
-        # uniform across GitHub's runner fleet, so some instances have no
-        # /dev/kvm at all (a genuinely absent device, not a permissions
-        # problem) -- the dedicated check below is the real pass/fail gate
-        # and gives a clear error either way.
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules || true
-          sudo udevadm trigger --name-match=kvm || true
-
-      - name: Check KVM availability
-        # Informational only -- astroimg's own accel detection
-        # (internal/platform.KVMUsable) falls back to TCG software
-        # emulation automatically when /dev/kvm isn't usable, so this no
-        # longer needs to fail the job. It's a real signal worth surfacing
-        # though: TCG is much slower, so a run that used it will take
-        # noticeably longer than usual.
-        run: |
-          if test -w /dev/kvm 2>/dev/null; then
-            echo "KVM available"
-          else
-            echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
-          fi
-
-      - name: Set up oras
-        uses: oras-project/setup-oras@v2
-
-      - name: Build astroimg
-        run: go build -o bin/astroimg ./cmd/astroimg
-
-      - name: Run pipeline (headless)
+      - name: Run base pipeline (headless)
+        # A layer boots from build/<base>-<arch>.qcow2, which doesn't exist
+        # on a fresh runner -- so a layer build always builds its base first.
+        env:
+          CLOUD_INIT_TIMEOUT: ${{ steps.setup.outputs.cloud_init_timeout }}
         run: |
           ./bin/astroimg pipeline \
             --headless \
-            --distro "${{ inputs.distro }}" \
-            --os-version "${{ inputs.os_version }}" \
-            --layer "${{ inputs.layer }}" \
-            --arch "${{ matrix.arch }}"
+            --distro "$DISTRO" \
+            --os-version "$OS_VERSION" \
+            --arch "$ARCH" \
+            --cloud-init-timeout "$CLOUD_INIT_TIMEOUT"
+
+      - name: Run layer pipeline (headless)
+        if: ${{ inputs.layer != '' }}
+        env:
+          CLOUD_INIT_TIMEOUT: ${{ steps.setup.outputs.cloud_init_timeout }}
+        run: |
+          ./bin/astroimg pipeline \
+            --headless \
+            --distro "$DISTRO" \
+            --os-version "$OS_VERSION" \
+            --layer "$LAYER" \
+            --arch "$ARCH" \
+            --cloud-init-timeout "$CLOUD_INIT_TIMEOUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -107,15 +118,32 @@ jobs:
 
       - name: Log in to registry
         if: ${{ inputs.push }}
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | oras login ghcr.io -u "$GH_ACTOR" --password-stdin
 
-      - name: Push artifact
-        if: ${{ inputs.push }}
+      - name: Push base artifact
+        if: ${{ inputs.push && (inputs.layer == '' || inputs.push_base) }}
+        env:
+          OWNER: ${{ github.repository_owner }}
         run: |
           ./bin/astroimg push \
-            --distro "${{ inputs.distro }}" \
-            --os-version "${{ inputs.os_version }}" \
-            --layer "${{ inputs.layer }}" \
-            --arch "${{ matrix.arch }}" \
+            --distro "$DISTRO" \
+            --os-version "$OS_VERSION" \
+            --arch "$ARCH" \
             --registry ghcr.io \
-            --username "${{ github.repository_owner }}"
+            --username "$OWNER"
+
+      - name: Push layer artifact
+        if: ${{ inputs.push && inputs.layer != '' }}
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          ./bin/astroimg push \
+            --distro "$DISTRO" \
+            --os-version "$OS_VERSION" \
+            --layer "$LAYER" \
+            --arch "$ARCH" \
+            --registry ghcr.io \
+            --username "$OWNER"
