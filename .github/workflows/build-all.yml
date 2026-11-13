@@ -14,6 +14,11 @@ name: Build all golden images
 on:
   workflow_dispatch:
     inputs:
+      arch:
+        description: "Architecture(s) to build"
+        type: choice
+        options: [all, amd64, arm64]
+        default: all
       push:
         description: "Push built artifacts to the registry"
         type: boolean
@@ -48,5 +53,6 @@ jobs:
     uses: ./.github/workflows/build-distro.yml
     with:
       distro: ${{ matrix.distro }}
+      arch: ${{ inputs.arch }}
       push: ${{ inputs.push }}
     secrets: inherit

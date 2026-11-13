@@ -1,0 +1,90 @@
+name: Set up astroimg build host
+description: >
+  Shared runner setup for every image-build job: frees disk, installs Go,
+  QEMU + EFI firmware for the target arch, opens up /dev/kvm, installs
+  oras, and builds ./bin/astroimg. Expects the repo to be checked out
+  already (a local action can't run before actions/checkout).
+
+inputs:
+  arch:
+    description: "Target architecture: amd64 or arm64"
+    required: true
+
+outputs:
+  accel:
+    description: "kvm if /dev/kvm is usable on this runner, tcg otherwise"
+    value: ${{ steps.kvm.outputs.accel }}
+  cloud_init_timeout:
+    description: "--cloud-init-timeout value sized for the detected accel"
+    value: ${{ steps.kvm.outputs.cloud_init_timeout }}
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk space
+      # Hosted runners ship ~14-20 GB free on /. A base image, its
+      # instance disk, a layer overlay, the compressed final artifact and
+      # the upload-artifact staging copy together get uncomfortably close
+      # to that, so drop preinstalled toolchains this pipeline never uses.
+      shell: bash
+      run: |
+        df -h /
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+        df -h /
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: "1.27"
+
+    - name: Install QEMU + EFI firmware
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        case "$ARCH" in
+          amd64) pkgs="qemu-system-x86 ovmf" ;;
+          arm64) pkgs="qemu-system-arm qemu-efi-aarch64" ;;
+          *) echo "::error::unsupported arch '$ARCH' (want amd64 or arm64)"; exit 1 ;;
+        esac
+        sudo apt-get update
+        sudo apt-get install -y $pkgs
+
+    - name: Enable KVM group perms
+      # GitHub-hosted runners USUALLY have KVM-capable hardware but don't
+      # ship /dev/kvm with permissions the runner user can use out of the
+      # box -- this udev rule opens it up (0666) so QEMU can use it instead
+      # of falling back to TCG. Best effort, not fatal: nested-virt support
+      # isn't guaranteed uniform across GitHub's runner fleet, so some
+      # instances have no /dev/kvm at all.
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules || true
+        sudo udevadm trigger --name-match=kvm || true
+
+    - name: Check KVM availability
+      id: kvm
+      # Not a pass/fail gate -- astroimg's own accel detection
+      # (internal/platform.KVMUsable) falls back to TCG automatically. But
+      # TCG is several times slower, so size the cloud-init wait to match:
+      # 90m is plenty on KVM, while a full layer install under TCG can run
+      # for hours. Both stay under the jobs' timeout-minutes.
+      shell: bash
+      run: |
+        if test -w /dev/kvm 2>/dev/null; then
+          echo "KVM available"
+          echo "accel=kvm" >> "$GITHUB_OUTPUT"
+          echo "cloud_init_timeout=90m" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::/dev/kvm not usable on this runner instance -- astroimg will fall back to TCG software emulation, which is much slower"
+          echo "accel=tcg" >> "$GITHUB_OUTPUT"
+          echo "cloud_init_timeout=240m" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up oras
+      uses: oras-project/setup-oras@v2
+
+    - name: Build astroimg
+      shell: bash
+      run: go build -o bin/astroimg ./cmd/astroimg

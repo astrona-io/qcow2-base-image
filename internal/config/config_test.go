@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func ubuntuCfg() DistroConfig {
@@ -349,5 +350,19 @@ func TestValidateLayerDirEmptyIsNoop(t *testing.T) {
 	got, err := ValidateLayerDir(dir, "")
 	if err != nil || got != "" {
 		t.Fatalf("ValidateLayerDir(empty) = (%q, %v), want (\"\", nil)", got, err)
+	}
+}
+
+func TestValidateTimeout(t *testing.T) {
+	for _, d := range []time.Duration{time.Second, 90 * time.Minute, MaxWaitTimeout} {
+		if err := ValidateTimeout("cloud-init-timeout", d); err != nil {
+			t.Errorf("ValidateTimeout(%s) = %v, want nil", d, err)
+		}
+	}
+
+	for _, d := range []time.Duration{0, -time.Minute, MaxWaitTimeout + time.Second} {
+		if err := ValidateTimeout("cloud-init-timeout", d); err == nil {
+			t.Errorf("ValidateTimeout(%s) = nil, want error", d)
+		}
 	}
 }

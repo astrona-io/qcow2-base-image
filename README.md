@@ -218,6 +218,29 @@ To build for a different architecture, use `--arch`:
 
 > **Note:** Building for a different architecture uses software emulation and can be significantly slower.
 
+Software emulation (TCG) can blow past the default waits. Raise them with
+`--cloud-init-timeout` (default `90m`) and `--hostkey-timeout` (default `20m`):
+
+    astroimg pipeline --distro ubuntu --layer lfcs --arch amd64 --cloud-init-timeout 300m
+
+### GitHub Actions
+
+All three workflows are manual (`workflow_dispatch`) and take an `arch`
+input (`all`, `amd64` or `arm64`), so one architecture can be (re)built and
+pushed without touching the other's published tags:
+
+- **Build golden image** (`build-image.yml`): one distro, optionally one
+  layer. A layer build builds its base first in the same job. `push` pushes
+  the layer (or the base, with no layer); `push_base` also pushes the base
+  a layer was built on.
+- **Build all golden images** (`build-all.yml`): every distro, base then its
+  layers, via the reusable `build-distro.yml`.
+
+Shared runner setup lives in `.github/actions/setup-build`. It detects
+whether `/dev/kvm` is usable and sizes `--cloud-init-timeout` to match
+(`90m` on KVM, `240m` under TCG); jobs cap at `timeout-minutes: 350`, just
+under the hosted-runner 6h limit.
+
 ### Build and push
 
 `astroimg push` only uploads an existing artifact. It does not build the image.
@@ -437,6 +460,9 @@ Log into the graphical desktop as `labadmin` / `testpassword`.
 - Headless runs (`--headless`, auto-enabled under `$CI` or non-macOS hosts)
   use `-display none` with the serial console redirected to a log file
   under `build/`.
+- The guest's `org.qemu.guest_agent.0` virtio port is backed by a host-side
+  unix socket (`.runtime/qga-<arch>.sock`), so `qemu-guest-agent` in the
+  guest has a real QGA endpoint to talk to.
 
 ### Network and SSH Ports
 

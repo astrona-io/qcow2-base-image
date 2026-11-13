@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +29,21 @@ var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 func ValidateName(kind, name string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("invalid %s name %q: must match %s", kind, name, namePattern.String())
+	}
+
+	return nil
+}
+
+// MaxWaitTimeout caps --cloud-init-timeout/--hostkey-timeout. Generous
+// enough for a cross-arch TCG build on a slow host, but still bounded so a
+// typo like "9000h" fails fast instead of hanging a build forever.
+const MaxWaitTimeout = 24 * time.Hour
+
+// ValidateTimeout checks that a user-supplied wait timeout is positive and
+// no larger than MaxWaitTimeout.
+func ValidateTimeout(flag string, d time.Duration) error {
+	if d <= 0 || d > MaxWaitTimeout {
+		return fmt.Errorf("invalid --%s %s: must be > 0 and <= %s", flag, d, MaxWaitTimeout)
 	}
 
 	return nil

@@ -133,3 +133,29 @@ func TestWaitForPortTimesOutWhenNothingListening(t *testing.T) {
 		t.Error("expected timeout error, got nil")
 	}
 }
+
+func TestBuildArgsGuestAgentChardev(t *testing.T) {
+	base := Config{QEMU: platform.QEMUConfig{Machine: "q35"}, Headless: true}
+
+	joined := strings.Join(BuildArgs(base), " ")
+	if !strings.Contains(joined, "-chardev null,id=qga0") {
+		t.Errorf("empty QGASocketPath should use a null chardev; got: %s", joined)
+	}
+
+	withSock := base
+	withSock.QGASocketPath = ".runtime/qga-amd64.sock"
+
+	joined = strings.Join(BuildArgs(withSock), " ")
+	for _, want := range []string{
+		"-chardev socket,id=qga0,path=.runtime/qga-amd64.sock,server=on,wait=off",
+		"virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args missing %q; got: %s", want, joined)
+		}
+	}
+
+	if strings.Contains(joined, "qemu-vdagent") {
+		t.Error("guest agent must not be wired to the SPICE qemu-vdagent backend")
+	}
+}
