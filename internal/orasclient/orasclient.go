@@ -35,17 +35,23 @@ type Credentials struct {
 // args returns the oras flags for these credentials. When Password is set,
 // the caller must also set the resulting *exec.Cmd's Stdin to
 // strings.NewReader(c.Password) -- see credArgs.
+//
+// Without a Password no flags are emitted at all: Username doubles as the
+// registry namespace (e.g. a GitHub org), and passing a bare --username to
+// oras makes it skip the credential stored by a prior 'oras login' and push
+// with that username and an empty password instead, which the registry
+// rejects as "denied".
 func (c Credentials) args() []string {
+	if c.Password == "" {
+		return nil
+	}
+
 	var args []string
 	if c.Username != "" {
 		args = append(args, "--username", c.Username)
 	}
 
-	if c.Password != "" {
-		args = append(args, "--password-stdin")
-	}
-
-	return args
+	return append(args, "--password-stdin")
 }
 
 // File is one blob to attach to a pushed OCI artifact manifest. Name is
