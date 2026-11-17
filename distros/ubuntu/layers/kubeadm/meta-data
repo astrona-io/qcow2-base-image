@@ -1,0 +1,2 @@
+instance-id: kubeadm-layer-base
+local-hostname: ubuntu-kubeadm

@@ -1,0 +1,328 @@
+#cloud-config
+
+# Layer: kubeadm. Applied on top of a finished base image (fresh instance-id,
+# so cloud-init re-runs even though the disk was already sysprepped).
+#
+# What this layer ships (everything works with no network after the build):
+#   - containerd (Ubuntu package, systemd cgroup driver), kernel modules and
+#     sysctls that kubeadm's preflight checks need, swap off.
+#   - kubeadm, kubelet and kubectl from the previous Kubernetes minor
+#     (K8S_FROM_MINOR below), installed from pkgs.k8s.io and held.
+#   - Every control-plane image for that version, and for the next minor
+#     (K8S_TO_MINOR), already pulled into containerd's k8s.io namespace.
+#   - A signed, offline apt repository per minor under /opt/kubernetes-apt/,
+#     laid out like pkgs.k8s.io (vX.Y/deb/ with a flat "/" suite). The
+#     to-minor one holds kubeadm, kubelet, kubectl, cri-tools and
+#     kubernetes-cni, so `apt-get install kubeadm=<1.35 version>` works
+#     offline. /etc/apt/sources.list.d/kubernetes.list points at the
+#     from-minor repository; an upgrade edits that line exactly as on a real
+#     host (v1.34 -> v1.35).
+#   - A bridge CNI configuration (/etc/cni/net.d/10-bridge.conflist) using
+#     the reference plugins from kubernetes-cni: no CNI images to pull, so it
+#     works offline. It is a single-node network only.
+#
+# kubeadm init does NOT run here. Sysprep regenerates the machine ID and SSH
+# host keys, and the VM that boots from this image picks its own hostname, so
+# certificates and the node name made at build time would be wrong. A lab or
+# playground runs /usr/local/sbin/astrona-kubeadm-init at bootstrap instead;
+# with the images already in containerd it finishes in about a minute and
+# pulls nothing (imagePullPolicy: Never).
+
+output:
+  all: '| tee -a /var/log/cloud-init-output.log /dev/tty1'
+
+# Base image already created the primary user; re-declaring ssh_authorized_keys
+# re-injects a fresh key since sysprep wiped the old one.
+users:
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${SSH_KEY}
+
+package_update: true
+
+packages:
+  - apt-transport-https
+  - apt-utils
+  - bash-completion
+  - ca-certificates
+  - conntrack
+  - containerd
+  - curl
+  - dpkg-dev
+  - gnupg
+  - jq
+  - socat
+  - vim
+
+write_files:
+  - path: /etc/modules-load.d/kubernetes.conf
+    permissions: '0644'
+    content: |
+      overlay
+      br_netfilter
+
+  - path: /etc/sysctl.d/99-kubernetes.conf
+    permissions: '0644'
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+  # Single-node pod network from the reference CNI plugins that the
+  # kubernetes-cni package installs into /opt/cni/bin. The subnet matches the
+  # podSubnet that astrona-kubeadm-init passes to kubeadm.
+  - path: /etc/cni/net.d/10-bridge.conflist
+    permissions: '0644'
+    content: |
+      {
+        "cniVersion": "1.0.0",
+        "name": "bridge",
+        "plugins": [
+          {
+            "type": "bridge",
+            "bridge": "cni0",
+            "isGateway": true,
+            "ipMasq": true,
+            "hairpinMode": true,
+            "ipam": {
+              "type": "host-local",
+              "ranges": [[{ "subnet": "10.244.0.0/16" }]],
+              "routes": [{ "dst": "0.0.0.0/0" }]
+            }
+          },
+          {
+            "type": "portmap",
+            "capabilities": { "portMappings": true }
+          }
+        ]
+      }
+
+  - path: /usr/local/share/astrona-kubeadm/build.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Build-time provisioning for the kubeadm layer. Runs once, from
+      # cloud-init runcmd, while the build VM still has network access.
+      set -euxo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      K8S_FROM_MINOR=v1.34
+      K8S_TO_MINOR=v1.35
+      REPO_ROOT=/opt/kubernetes-apt
+      KEYRING_ONLINE=/etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      KEYRING_LOCAL=/etc/apt/keyrings/astrona-kubernetes-local.gpg
+      LIST=/etc/apt/sources.list.d/kubernetes.list
+      CRI_SOCKET=unix:///run/containerd/containerd.sock
+      PACKAGES="kubeadm kubelet kubectl cri-tools kubernetes-cni"
+
+      # --- Kernel modules, sysctls, swap -----------------------------------
+      modprobe overlay
+      modprobe br_netfilter
+      sysctl --system
+      swapoff -a
+      sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+
+      # --- containerd --------------------------------------------------------
+      mkdir -p /etc/containerd
+      containerd config default > /etc/containerd/config.toml
+      sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+      grep -q 'SystemdCgroup = true' /etc/containerd/config.toml
+      systemctl restart containerd
+      systemctl enable containerd
+
+      # --- Kubernetes packages (from-minor, online) --------------------------
+      install -d -m 0755 /etc/apt/keyrings
+      curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_FROM_MINOR}/deb/Release.key" \
+        | gpg --dearmor --yes -o "$KEYRING_ONLINE"
+      chmod 0644 "$KEYRING_ONLINE"
+
+      online_repo() {
+        echo "deb [signed-by=$KEYRING_ONLINE] https://pkgs.k8s.io/core:/stable:/$1/deb/ /" > "$LIST"
+        apt-get update
+      }
+
+      online_repo "$K8S_FROM_MINOR"
+      apt-get install -y $PACKAGES
+      apt-mark hold kubeadm kubelet kubectl
+      systemctl enable kubelet
+
+      # --- Offline repositories: download the .deb files ---------------------
+      # The from-minor repository holds exactly what is installed, so a
+      # reinstall works offline too. The to-minor one holds the newest
+      # patch of each package in that minor.
+      from_dir="$REPO_ROOT/$K8S_FROM_MINOR/deb"
+      to_dir="$REPO_ROOT/$K8S_TO_MINOR/deb"
+      install -d -m 0755 "$from_dir" "$to_dir"
+      (
+        cd "$from_dir"
+        for p in $PACKAGES; do
+          apt-get download "$p=$(dpkg-query -W -f='${Version}' "$p")"
+        done
+      )
+      online_repo "$K8S_TO_MINOR"
+      ( cd "$to_dir" && apt-get download $PACKAGES )
+
+      # --- Offline repositories: index and sign ------------------------------
+      export GNUPGHOME
+      GNUPGHOME=$(mktemp -d)
+      gpg --batch --pinentry-mode loopback --passphrase '' \
+        --quick-gen-key "Astrona offline Kubernetes packages <noreply@astrona.io>" ed25519 sign never
+      gpg --batch --export > "$KEYRING_LOCAL"
+      chmod 0644 "$KEYRING_LOCAL"
+      for dir in "$from_dir" "$to_dir"; do
+        (
+          cd "$dir"
+          dpkg-scanpackages --multiversion . /dev/null > Packages
+          gzip -9kf Packages
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=astrona-offline \
+            -o APT::FTPArchive::Release::Label=kubernetes \
+            release . > Release
+          gpg --batch --yes --pinentry-mode loopback --passphrase '' --clearsign -o InRelease Release
+          gpg --batch --yes --pinentry-mode loopback --passphrase '' -abs -o Release.gpg Release
+        )
+      done
+      # The signing key is thrown away: nothing can add packages that apt
+      # would trust later.
+      rm -rf "$GNUPGHOME"
+      unset GNUPGHOME
+
+      # The kubernetes.list now names only the offline from-minor repository.
+      echo "deb [signed-by=$KEYRING_LOCAL] file:$REPO_ROOT/$K8S_FROM_MINOR/deb/ /" > "$LIST"
+      rm -f "$KEYRING_ONLINE"
+      apt-get update
+
+      # --- Images ------------------------------------------------------------
+      from_version=$(kubeadm version -o short)
+      to_kubeadm_dir=$(mktemp -d)
+      dpkg-deb -x "$(ls "$to_dir"/kubeadm_*.deb)" "$to_kubeadm_dir"
+      to_kubeadm="$to_kubeadm_dir/usr/bin/kubeadm"
+      to_version=$("$to_kubeadm" version -o short)
+
+      # containerd starts every pod with its own sandbox (pause) image, which
+      # may differ from the one kubeadm lists. Point containerd at kubeadm's
+      # pause image so only one is needed, and pull containerd's default too
+      # in case a later config reset brings it back.
+      pause_image=$(kubeadm config images list --kubernetes-version "$from_version" | grep '/pause:')
+      # containerd 1.7 writes sandbox_image = "...", containerd 2.x writes
+      # sandbox = '...'; handle both.
+      default_sandbox=$(containerd config default | sed -nE "s/^\s*(sandbox_image|sandbox) = [\"']([^\"']+)[\"'].*/\2/p" | head -n1)
+      sed -ri "s#^(\s*)(sandbox_image|sandbox) = [\"'][^\"']*[\"']#\1\2 = \"$pause_image\"#" /etc/containerd/config.toml
+      grep -qF "\"$pause_image\"" /etc/containerd/config.toml
+      systemctl restart containerd
+
+      kubeadm config images pull --kubernetes-version "$from_version" --cri-socket "$CRI_SOCKET"
+      "$to_kubeadm" config images pull --kubernetes-version "$to_version" --cri-socket "$CRI_SOCKET"
+      if [ -n "$default_sandbox" ]; then
+        ctr -n k8s.io images pull "$default_sandbox"
+      fi
+      rm -rf "$to_kubeadm_dir"
+
+      # crictl reads its endpoint from here, so `crictl images` works as is.
+      printf 'runtime-endpoint: %s\nimage-endpoint: %s\n' "$CRI_SOCKET" "$CRI_SOCKET" > /etc/crictl.yaml
+
+      # --- Record what this image contains -----------------------------------
+      install -d -m 0755 /etc/astrona-kubeadm
+      {
+        echo "K8S_FROM_MINOR=$K8S_FROM_MINOR"
+        echo "K8S_FROM_VERSION=$from_version"
+        echo "K8S_TO_MINOR=$K8S_TO_MINOR"
+        echo "K8S_TO_VERSION=$to_version"
+        echo "PAUSE_IMAGE=$pause_image"
+        echo "POD_SUBNET=10.244.0.0/16"
+      } > /etc/astrona-kubeadm/versions.env
+      crictl images > /etc/astrona-kubeadm/images.txt
+      (cd "$REPO_ROOT" && ls -1 */deb/*.deb) > /etc/astrona-kubeadm/packages.txt
+      cat /etc/astrona-kubeadm/versions.env /etc/astrona-kubeadm/images.txt /etc/astrona-kubeadm/packages.txt
+
+  - path: /usr/local/sbin/astrona-kubeadm-init
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Creates the single-node kubeadm cluster this image is prepared for.
+      # Run it once from a lab or playground bootstrap, as root:
+      #
+      #   astrona-kubeadm-init [--node-name NAME] [--cluster-name NAME] [--user USER]...
+      #
+      # It pulls nothing (imagePullPolicy: Never): every image is already in
+      # containerd. --user copies /etc/kubernetes/admin.conf to that user's
+      # ~/.kube/config. Running it again on an initialised node only refreshes
+      # those copies.
+      set -euo pipefail
+      # shellcheck disable=SC1091
+      . /etc/astrona-kubeadm/versions.env
+
+      node_name=$(hostname)
+      cluster_name=kubernetes
+      users=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --node-name) node_name=$2; shift 2 ;;
+          --cluster-name) cluster_name=$2; shift 2 ;;
+          --user) users+=("$2"); shift 2 ;;
+          *) echo "unknown argument: $1" >&2; exit 2 ;;
+        esac
+      done
+
+      if [ ! -f /etc/kubernetes/admin.conf ]; then
+        # The node name must resolve locally, or kubeadm's preflight warns
+        # and the kubelet logs lookup errors.
+        if ! grep -qE "\s$node_name(\s|$)" /etc/hosts; then
+          echo "127.0.1.1 $node_name" >> /etc/hosts
+        fi
+        install -d -m 0700 /etc/kubernetes
+        cat > /etc/kubernetes/kubeadm-init.yaml <<EOF
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: InitConfiguration
+      nodeRegistration:
+        name: $node_name
+        criSocket: unix:///run/containerd/containerd.sock
+        imagePullPolicy: Never
+        taints: []
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: ClusterConfiguration
+      clusterName: $cluster_name
+      kubernetesVersion: $K8S_FROM_VERSION
+      networking:
+        podSubnet: $POD_SUBNET
+      ---
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+      EOF
+        kubeadm init --config /etc/kubernetes/kubeadm-init.yaml </dev/null
+      fi
+
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      install -d -m 0700 /root/.kube
+      install -m 0600 /etc/kubernetes/admin.conf /root/.kube/config
+      for user in "${users[@]}"; do
+        home=$(getent passwd "$user" | cut -d: -f6)
+        install -d -m 0700 -o "$user" -g "$user" "$home/.kube"
+        install -m 0600 -o "$user" -g "$user" /etc/kubernetes/admin.conf "$home/.kube/config"
+      done
+
+      kubectl wait --for=condition=Ready "node/$node_name" --timeout=300s
+      kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+      kubectl get nodes -o wide
+
+runcmd:
+  - /usr/local/share/astrona-kubeadm/build.sh
+  - |
+    cat << 'EOF' > /etc/update-motd.d/99-astrona-kubeadm
+    #!/bin/sh
+    . /etc/astrona-kubeadm/versions.env
+    echo "======================================================================"
+    echo "  KUBEADM PRACTICE IMAGE"
+    echo "======================================================================"
+    echo " Installed and held: kubeadm, kubelet, kubectl $K8S_FROM_VERSION"
+    echo " Offline packages:   /opt/kubernetes-apt/$K8S_FROM_MINOR/deb and"
+    echo "                     /opt/kubernetes-apt/$K8S_TO_MINOR/deb ($K8S_TO_VERSION)"
+    echo " Images pre-pulled for $K8S_FROM_VERSION and $K8S_TO_VERSION: crictl images"
+    echo "======================================================================"
+    EOF
+    chmod +x /etc/update-motd.d/99-astrona-kubeadm
+
+# No power_state reboot here on purpose -- see distros/ubuntu/user-data.template
+# for why: it would race astroimg pipeline's automated post-cloud-init sysprep.
