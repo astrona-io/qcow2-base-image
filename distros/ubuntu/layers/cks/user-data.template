@@ -31,6 +31,12 @@
 #   - kube-bench (CIS Kubernetes Benchmark checker): the binary and its cfg/
 #     directory at /usr/local/bin/kube-bench and /etc/kube-bench/cfg, checked
 #     against the release checksums, and its container image.
+#   - gVisor (GVISOR_VERSION below): runsc, containerd-shim-runsc-v1 and the
+#     gvisor-bin/ sidecar binaries runsc needs next to it, from the official
+#     release tarball, checked against its .sha512. containerd registers the
+#     runtime handler `runsc` (runtime_type io.containerd.runsc.v1), so a
+#     RuntimeClass with `handler: runsc` runs Pods in the gVisor sandbox with
+#     no download at run time.
 #   - AppArmor tools (apparmor-utils) and auditd for host hardening tasks.
 #   - The workload images the CKS labs use, already in containerd
 #     (LAB_IMAGES below), so labs start without pulling.
@@ -125,6 +131,7 @@ write_files:
       K8S_FROM_MINOR=v1.35
       K8S_TO_MINOR=v1.36
       KUBE_BENCH_VERSION=0.10.6
+      GVISOR_VERSION=20261116.0
       LAB_IMAGES="docker.io/aquasec/kube-bench:v${KUBE_BENCH_VERSION}
         docker.io/library/busybox:1.37.0
         docker.io/library/python:3.13-alpine
@@ -260,6 +267,59 @@ write_files:
       rm -rf "$bench_tmp"
       kube-bench version
 
+      # --- gVisor (runsc) -----------------------------------------------------
+      # Recent releases ship one gvisor.tar.bz2 per arch: runsc,
+      # containerd-shim-runsc-v1 and a gvisor-bin/ directory of sidecar
+      # binaries (the Sentry among them). runsc looks for gvisor-bin/ next to
+      # its own binary and downloads it when missing, so it is installed
+      # beside runsc here to keep the image offline.
+      gvisor_arch=$(uname -m)
+      gvisor_tmp=$(mktemp -d)
+      gvisor_url="https://storage.googleapis.com/gvisor/releases/release/${GVISOR_VERSION}/${gvisor_arch}"
+      curl -fsSL -o "$gvisor_tmp/gvisor.tar.bz2" "$gvisor_url/gvisor.tar.bz2"
+      curl -fsSL -o "$gvisor_tmp/gvisor.tar.bz2.sha512" "$gvisor_url/gvisor.tar.bz2.sha512"
+      (cd "$gvisor_tmp" && sha512sum -c gvisor.tar.bz2.sha512)
+      install -d -m 0755 "$gvisor_tmp/x" /usr/local/bin/gvisor-bin
+      tar -xjf "$gvisor_tmp/gvisor.tar.bz2" -C "$gvisor_tmp/x"
+      install -m 0755 "$gvisor_tmp/x/runsc" "$gvisor_tmp/x/containerd-shim-runsc-v1" /usr/local/bin/
+      install -m 0755 "$gvisor_tmp/x"/gvisor-bin/* /usr/local/bin/gvisor-bin/
+      rm -rf "$gvisor_tmp"
+      runsc --version
+
+      # Register the runtime handler next to runc's, under whatever plugin
+      # path this containerd's config uses (config version 2 on containerd
+      # 1.7: "io.containerd.grpc.v1.cri"; version 3 on 2.x:
+      # 'io.containerd.cri.v1.runtime'). A TOML table may be appended at the
+      # end of the file.
+      runc_table=$(grep -E '^\s*\[plugins\..*\.runtimes\.runc\]\s*$' /etc/containerd/config.toml | head -n1 | sed -E 's/^\s+//; s/\s+$//')
+      test -n "$runc_table"
+      runsc_table=$(printf '%s' "$runc_table" | sed -E 's/\.runc\]$/.runsc]/')
+      if ! grep -qF "$runsc_table" /etc/containerd/config.toml; then
+        printf '\n%s\n  runtime_type = "io.containerd.runsc.v1"\n' "$runsc_table" >> /etc/containerd/config.toml
+      fi
+      systemctl restart containerd
+      # The CRI plugin must report the handler, or kubelet rejects a Pod
+      # whose RuntimeClass names it.
+      for _ in $(seq 1 30); do
+        crictl --runtime-endpoint "$CRI_SOCKET" info >/dev/null 2>&1 && break
+        sleep 2
+      done
+      crictl --runtime-endpoint "$CRI_SOCKET" info \
+        | jq -e '[.. | objects | .runsc? // empty | .runtimeType] | index("io.containerd.runsc.v1") != null'
+      # End to end, offline: start a container in the sandbox from an image
+      # that is already in containerd and look for gVisor's kernel banner.
+      # The container writes into a bind mount rather than stdout: ctr's
+      # non-tty stdio with the runsc shim can come back empty.
+      gvisor_out=$(mktemp -d)
+      ctr -n k8s.io run --rm --runtime io.containerd.runsc.v1 \
+        --mount "type=bind,src=$gvisor_out,dst=/out,options=rbind:rw" \
+        docker.io/library/busybox:1.37.0 astrona-gvisor-check \
+        sh -c 'dmesg > /out/dmesg 2>&1; uname -r > /out/uname'
+      cat "$gvisor_out/dmesg" "$gvisor_out/uname"
+      grep -q 'Starting gVisor' "$gvisor_out/dmesg"
+      test "$(cat "$gvisor_out/uname")" != "$(uname -r)"
+      rm -rf "$gvisor_out"
+
       # crictl reads its endpoint from here, so `crictl images` works as is.
       printf 'runtime-endpoint: %s\nimage-endpoint: %s\n' "$CRI_SOCKET" "$CRI_SOCKET" > /etc/crictl.yaml
 
@@ -273,6 +333,7 @@ write_files:
         echo "PAUSE_IMAGE=$pause_image"
         echo "POD_SUBNET=10.244.0.0/16"
         echo "KUBE_BENCH_VERSION=$KUBE_BENCH_VERSION"
+        echo "GVISOR_VERSION=$GVISOR_VERSION"
       } > /etc/astrona-kubeadm/versions.env
       crictl images > /etc/astrona-kubeadm/images.txt
       (cd "$REPO_ROOT" && ls -1 */deb/*.deb) > /etc/astrona-kubeadm/packages.txt
@@ -364,6 +425,7 @@ runcmd:
     echo "                     /opt/kubernetes-apt/$K8S_TO_MINOR/deb ($K8S_TO_VERSION)"
     echo " Images pre-pulled for $K8S_FROM_VERSION and $K8S_TO_VERSION: crictl images"
     echo " kube-bench $KUBE_BENCH_VERSION: kube-bench run --targets master,node"
+    echo " gVisor $GVISOR_VERSION: RuntimeClass handler runsc"
     echo "======================================================================"
     EOF
     chmod +x /etc/update-motd.d/99-astrona-cks
