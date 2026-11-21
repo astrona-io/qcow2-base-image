@@ -32,6 +32,7 @@ var (
 	flagVerbose        bool
 	flagFlatten        bool
 	flagDryRun         bool
+	flagOCITag         string
 
 	flagCloudInitTimeout time.Duration
 	flagHostKeyTimeout   time.Duration
@@ -58,6 +59,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagPassword, "password", "p", "", "registry login password/token for push/test-oci (default: none -- relies on a prior 'oras login')")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&flagFlatten, "flatten", false, "for layer builds: fold the base's data into a standalone image instead of a small base-backed overlay (bigger, but self-contained)")
+	rootCmd.PersistentFlags().StringVar(&flagOCITag, "oci-tag", "", "for push/test-oci: registry tag to use instead of the default <os_version>-<layer|base>-<arch>")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "print the QEMU command and exit without starting the VM")
 	rootCmd.PersistentFlags().DurationVar(&flagCloudInitTimeout, "cloud-init-timeout", 90*time.Minute, "max wait for cloud-init to finish provisioning (raise for TCG software emulation, e.g. 300m)")
 	rootCmd.PersistentFlags().DurationVar(&flagHostKeyTimeout, "hostkey-timeout", 20*time.Minute, "max wait for the guest's SSH host key on first boot")
@@ -161,7 +163,12 @@ func ociImage(r config.Resolved) string {
 		username = gitConfigUserNameOrDefault()
 	}
 
-	return config.OCIImage(flagRegistry, username, r.OCIRepo, r.OCITag)
+	tag := r.OCITag
+	if flagOCITag != "" {
+		tag = flagOCITag
+	}
+
+	return config.OCIImage(flagRegistry, username, r.OCIRepo, tag)
 }
 
 // ociCredentials builds the orasclient.Credentials passed to push/pull from
