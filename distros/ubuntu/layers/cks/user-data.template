@@ -236,11 +236,37 @@ write_files:
       kubeadm config images pull --kubernetes-version "$from_version" --cri-socket "$CRI_SOCKET"
       "$to_kubeadm" config images pull --kubernetes-version "$to_version" --cri-socket "$CRI_SOCKET"
       if [ -n "$default_sandbox" ]; then
-        ctr -n k8s.io images pull "$default_sandbox"
+        ctr -n k8s.io images pull --platform "linux/$(dpkg --print-architecture)" "$default_sandbox"
       fi
+      kubeadm_images=$( { kubeadm config images list --kubernetes-version "$from_version"
+        "$to_kubeadm" config images list --kubernetes-version "$to_version"
+        [ -z "$default_sandbox" ] || echo "$default_sandbox"; } | sort -u)
       rm -rf "$to_kubeadm_dir"
       for image in $LAB_IMAGES; do
         ctr -n k8s.io images pull --platform "linux/$(dpkg --print-architecture)" "$image"
+      done
+
+      # Run the main binary of every kubeadm image once. An image whose
+      # unpacked snapshot lost its file data (an unclean stop shortly after
+      # the pull, then a second provisioning run that finds the image
+      # "already present") still lists fine in `crictl images`, but its
+      # files are 0 bytes and a Pod fails only at start with
+      # "exec /pause: exec format error". Catch it here, before publishing.
+      sync
+      check=0
+      for image in $kubeadm_images; do
+        name=${image##*/}
+        name=${name%%:*}
+        case "$name" in
+          pause) cmd=(/pause -v) ;;
+          coredns) cmd=(/coredns -version) ;;
+          etcd) cmd=(/usr/local/bin/etcd --version) ;;
+          kube-*) cmd=("/usr/local/bin/$name" --version) ;;
+          *) echo "no run check for $image" >&2; exit 1 ;;
+        esac
+        check=$((check + 1))
+        ctr -n k8s.io run --rm "$image" "astrona-image-check-$check" "${cmd[@]}" >/dev/null
+        echo "image run check passed: $image"
       done
 
       # --- kube-bench ---------------------------------------------------------
