@@ -35,6 +35,14 @@ on:
         description: "When building a layer, also push the base image it was built on"
         type: boolean
         default: false
+      flatten:
+        description: "When building a layer, fold the base into one standalone image.qcow2 (what astrona consumes)"
+        type: boolean
+        default: false
+      oci_tag:
+        description: "Tag for the pushed layer instead of <os_version>-<layer>-<arch>; {arch} is replaced, for example 24.04-cks-20261121-{arch}"
+        default: ""
+        required: false
 
 permissions:
   contents: read
@@ -74,6 +82,8 @@ jobs:
       OS_VERSION: ${{ inputs.os_version }}
       LAYER: ${{ inputs.layer }}
       ARCH: ${{ matrix.arch }}
+      FLATTEN: ${{ inputs.flatten }}
+      OCI_TAG: ${{ inputs.oci_tag }}
     steps:
       - uses: actions/checkout@v7
 
@@ -107,6 +117,7 @@ jobs:
             --os-version "$OS_VERSION" \
             --layer "$LAYER" \
             --arch "$ARCH" \
+            --flatten="$FLATTEN" \
             --cloud-init-timeout "$CLOUD_INIT_TIMEOUT"
 
       - name: Upload artifact
@@ -151,5 +162,7 @@ jobs:
             --os-version "$OS_VERSION" \
             --layer "$LAYER" \
             --arch "$ARCH" \
+            --flatten="$FLATTEN" \
+            --oci-tag "${OCI_TAG//\{arch\}/$ARCH}" \
             --registry ghcr.io \
             --username "$OWNER"

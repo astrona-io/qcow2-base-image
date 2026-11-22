@@ -37,6 +37,13 @@
 #     runtime handler `runsc` (runtime_type io.containerd.runsc.v1), so a
 #     RuntimeClass with `handler: runsc` runs Pods in the gVisor sandbox with
 #     no download at run time.
+#   - Falco (FALCO_VERSION below), the runtime threat detection engine, from
+#     the official falcosecurity apt repository, with the modern eBPF driver
+#     (CO-RE probe built into the falco binary: no kernel module, no dkms).
+#     Its systemd service is installed but disabled and stopped; a lab starts
+#     it with `systemctl start falco-modern-bpf.service` (alias falco.service).
+#     falcoctl-artifact-follow.service is masked, so no rule update is
+#     fetched at run time.
 #   - AppArmor tools (apparmor-utils) and auditd for host hardening tasks.
 #   - The workload images the CKS labs use, already in containerd
 #     (LAB_IMAGES below), so labs start without pulling.
@@ -132,6 +139,7 @@ write_files:
       K8S_TO_MINOR=v1.36
       KUBE_BENCH_VERSION=0.10.6
       GVISOR_VERSION=20261116.0
+      FALCO_VERSION=0.45.2
       LAB_IMAGES="docker.io/aquasec/kube-bench:v${KUBE_BENCH_VERSION}
         docker.io/library/busybox:1.37.0
         docker.io/library/python:3.13-alpine
@@ -262,8 +270,11 @@ write_files:
       (cd "$bench_tmp" && grep " $bench_tar\$" checksums.txt | sha256sum -c -)
       tar -xzf "$bench_tmp/$bench_tar" -C "$bench_tmp"
       install -m 0755 "$bench_tmp/kube-bench" /usr/local/bin/kube-bench
-      install -d -m 0755 /etc/kube-bench
-      cp -r "$bench_tmp/cfg" /etc/kube-bench/cfg
+      # Copy the contents of cfg/, not the folder: if /etc/kube-bench/cfg
+      # already exists, `cp -r cfg /etc/kube-bench/cfg` nests it as cfg/cfg.
+      install -d -m 0755 /etc/kube-bench/cfg
+      cp -r "$bench_tmp/cfg/." /etc/kube-bench/cfg/
+      test -f /etc/kube-bench/cfg/config.yaml
       rm -rf "$bench_tmp"
       kube-bench version
 
@@ -319,6 +330,60 @@ write_files:
       grep -q 'Starting gVisor' "$gvisor_out/dmesg"
       test "$(cat "$gvisor_out/uname")" != "$(uname -r)"
       rm -rf "$gvisor_out"
+      # --- Falco ---------------------------------------------------------------
+      # From the official falcosecurity apt repository (one package per arch,
+      # amd64 and arm64), pinned and held. The package's postinst reads these
+      # variables: modern_ebpf configures the modern eBPF driver, which is
+      # built into the falco binary and needs no kernel module or dkms;
+      # FALCOCTL_ENABLED=no masks falcoctl-artifact-follow.service, which
+      # would fetch rule updates from the network.
+      falco_keyring=/etc/apt/keyrings/falco-archive-keyring.gpg
+      falco_list=/etc/apt/sources.list.d/falcosecurity.list
+      curl -fsSL https://falco.org/repo/falcosecurity-packages.asc \
+        | gpg --dearmor --yes -o "$falco_keyring"
+      chmod 0644 "$falco_keyring"
+      echo "deb [signed-by=$falco_keyring] https://download.falco.org/packages/deb stable main" > "$falco_list"
+      apt-get update
+      FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf FALCOCTL_ENABLED=no \
+        apt-get install -y "falco=$FALCO_VERSION"
+      apt-mark hold falco
+      falco --version
+      test "$(dpkg-query -W -f='${Version}' falco)" = "$FALCO_VERSION"
+      # No kernel module path: dkms must not have come in with the package.
+      # (`set -e` ignores a failing `! cmd`, so these checks use `if`.)
+      if dpkg-query -W -f='${Status}' dkms 2>/dev/null | grep -q 'install ok installed'; then
+        echo "dkms is installed; the modern eBPF driver must not need it" >&2
+        exit 1
+      fi
+
+      # The postinst enables and starts falco-modern-bpf.service. Labs start
+      # it themselves, so it ships disabled and stopped:
+      #   systemctl start falco-modern-bpf.service   (alias: falco.service)
+      systemctl stop falco-modern-bpf.service
+      systemctl disable falco-modern-bpf.service
+      # is-enabled prints "masked" and exits non-zero for a masked unit.
+      test "$(systemctl is-enabled falcoctl-artifact-follow.service || true)" = masked
+      if systemctl is-enabled --quiet falco-modern-bpf.service \
+        || systemctl is-active --quiet falco-modern-bpf.service; then
+        echo "falco-modern-bpf.service must ship disabled and stopped" >&2
+        exit 1
+      fi
+
+      # End to end: the modern eBPF probe must load on this kernel. Falco runs
+      # in the foreground until `timeout` stops it; exit status 124 means it
+      # was still running after 30 seconds, any other status is a failure.
+      falco_log=$(mktemp)
+      falco_status=0
+      timeout 30 falco -o engine.kind=modern_ebpf > "$falco_log" 2>&1 || falco_status=$?
+      cat "$falco_log"
+      test "$falco_status" -eq 124
+      grep -qi 'modern bpf' "$falco_log"
+      rm -f "$falco_log"
+
+      # The image is offline after the build: drop the online repository so
+      # apt does not try to reach it (the package stays installed and held).
+      rm -f "$falco_list" "$falco_keyring"
+      apt-get update
 
       # crictl reads its endpoint from here, so `crictl images` works as is.
       printf 'runtime-endpoint: %s\nimage-endpoint: %s\n' "$CRI_SOCKET" "$CRI_SOCKET" > /etc/crictl.yaml
@@ -334,6 +399,7 @@ write_files:
         echo "POD_SUBNET=10.244.0.0/16"
         echo "KUBE_BENCH_VERSION=$KUBE_BENCH_VERSION"
         echo "GVISOR_VERSION=$GVISOR_VERSION"
+        echo "FALCO_VERSION=$FALCO_VERSION"
       } > /etc/astrona-kubeadm/versions.env
       crictl images > /etc/astrona-kubeadm/images.txt
       (cd "$REPO_ROOT" && ls -1 */deb/*.deb) > /etc/astrona-kubeadm/packages.txt
@@ -426,6 +492,7 @@ runcmd:
     echo " Images pre-pulled for $K8S_FROM_VERSION and $K8S_TO_VERSION: crictl images"
     echo " kube-bench $KUBE_BENCH_VERSION: kube-bench run --targets master,node"
     echo " gVisor $GVISOR_VERSION: RuntimeClass handler runsc"
+    echo " Falco $FALCO_VERSION (modern eBPF, off): systemctl start falco-modern-bpf.service"
     echo "======================================================================"
     EOF
     chmod +x /etc/update-motd.d/99-astrona-cks
