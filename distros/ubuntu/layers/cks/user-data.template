@@ -255,8 +255,11 @@ write_files:
       (cd "$bench_tmp" && grep " $bench_tar\$" checksums.txt | sha256sum -c -)
       tar -xzf "$bench_tmp/$bench_tar" -C "$bench_tmp"
       install -m 0755 "$bench_tmp/kube-bench" /usr/local/bin/kube-bench
-      install -d -m 0755 /etc/kube-bench
-      cp -r "$bench_tmp/cfg" /etc/kube-bench/cfg
+      # Copy the contents of cfg/, not the folder: if /etc/kube-bench/cfg
+      # already exists, `cp -r cfg /etc/kube-bench/cfg` nests it as cfg/cfg.
+      install -d -m 0755 /etc/kube-bench/cfg
+      cp -r "$bench_tmp/cfg/." /etc/kube-bench/cfg/
+      test -f /etc/kube-bench/cfg/config.yaml
       rm -rf "$bench_tmp"
       kube-bench version
 
