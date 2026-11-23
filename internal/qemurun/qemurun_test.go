@@ -3,6 +3,8 @@ package qemurun
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -157,5 +159,31 @@ func TestBuildArgsGuestAgentChardev(t *testing.T) {
 
 	if strings.Contains(joined, "qemu-vdagent") {
 		t.Error("guest agent must not be wired to the SPICE qemu-vdagent backend")
+	}
+}
+
+func TestHasHostKey(t *testing.T) {
+	dir := t.TempDir()
+
+	if HasHostKey(filepath.Join(dir, "missing")) {
+		t.Error("missing file should report no host key")
+	}
+
+	cases := map[string]bool{
+		"":                                     false,
+		"\n\n":                                 false,
+		"# localhost:2222 SSH-2.0-OpenSSH\n":   false,
+		"|1|abc=|def= ssh-ed25519 AAAAC3Nza\n": true,
+	}
+
+	for content, want := range cases {
+		path := filepath.Join(dir, "known_hosts")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := HasHostKey(path); got != want {
+			t.Errorf("HasHostKey(%q) = %v, want %v", content, got, want)
+		}
 	}
 }

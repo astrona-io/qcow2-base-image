@@ -120,6 +120,31 @@ jobs:
             --flatten="$FLATTEN" \
             --cloud-init-timeout "$CLOUD_INIT_TIMEOUT"
 
+      - name: Show guest serial console
+        # Headless QEMU writes the guest's serial console to
+        # .runtime/<tag>-console.log. When a boot stalls, its tail shows
+        # where (firmware, kernel, cloud-init, sshd) without a rerun.
+        if: ${{ failure() || cancelled() }}
+        run: |
+          shopt -s nullglob
+          for f in .runtime/*-console.log; do
+            echo "::group::tail of $f ($(wc -c < "$f") bytes)"
+            tail -n 300 "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Upload guest serial console
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: console-${{ inputs.distro }}${{ inputs.layer != '' && format('-{0}', inputs.layer) || '' }}-${{ matrix.arch }}
+          path: .runtime/*-console.log
+          # .runtime is a dot-directory; upload-artifact skips hidden
+          # paths unless told otherwise.
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
