@@ -76,7 +76,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Hosted runners hard-stop at 360m; stay under it so a hung VM fails
     # with astroimg's own timeout error instead of a silent runner kill.
-    timeout-minutes: ${{ matrix.arch == 'arm64' && 60 || 350 }}
+    timeout-minutes: 350
     env:
       DISTRO: ${{ inputs.distro }}
       OS_VERSION: ${{ inputs.os_version }}
