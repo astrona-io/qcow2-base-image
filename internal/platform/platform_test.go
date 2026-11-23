@@ -44,6 +44,10 @@ func TestSelectAccelNativeLinuxNoKVM(t *testing.T) {
 	got := SelectAccel("linux", "amd64", "amd64", false)
 	want := []string{"-accel", "tcg", "-cpu", "max"}
 	assertEqualSlice(t, got, want)
+
+	got = SelectAccel("linux", "arm64", "arm64", false)
+	want = []string{"-accel", "tcg", "-cpu", "max,pauth-impdef=on"}
+	assertEqualSlice(t, got, want)
 }
 
 func TestSelectAccelCrossArch(t *testing.T) {

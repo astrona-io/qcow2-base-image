@@ -75,7 +75,7 @@ func SelectAccel(hostOS, hostArch, targetArch string, kvmUsable bool) []string {
 		// guaranteed uniform across their fleet). Fall back to TCG software
 		// emulation: much slower than KVM, but the build completes instead
 		// of QEMU failing outright to init KVM.
-		return []string{flagAccel, "tcg", flagCPU, "max"}
+		return []string{flagAccel, "tcg", flagCPU, tcgCPU(targetArch)}
 	}
 	// Cross-architecture emulation: no hardware acceleration available.
 	if targetArch == ArchARM64 {
@@ -83,6 +83,20 @@ func SelectAccel(hostOS, hostArch, targetArch string, kvmUsable bool) []string {
 	}
 
 	return []string{flagCPU, "qemu64"}
+}
+
+// tcgCPU is the -cpu model for same-arch TCG. "max" gives the guest every
+// feature QEMU can emulate. On aarch64 that includes pointer
+// authentication with the architected QARMA5 cipher, which TCG computes
+// in software on every signed return address -- a large slowdown for a
+// whole-distro boot. pauth-impdef=on keeps the feature but uses QEMU's
+// cheap IMPDEF algorithm, so the guest sees the same CPU features.
+func tcgCPU(targetArch string) string {
+	if targetArch == ArchARM64 {
+		return "max,pauth-impdef=on"
+	}
+
+	return "max"
 }
 
 // KVMUsable reports whether /dev/kvm exists and can actually be opened for
