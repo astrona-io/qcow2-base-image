@@ -290,6 +290,25 @@ func WaitAndPinHostKey(ctx context.Context, knownHostsFile string, port int, max
 	}
 }
 
+// HasHostKey reports whether knownHostsFile holds at least one host-key
+// entry (any non-blank, non-comment line). A missing or unreadable file
+// counts as no key.
+func HasHostKey(knownHostsFile string) bool {
+	data, err := os.ReadFile(knownHostsFile) //nolint:gosec // knownHostsFile is internally resolved, not raw user input
+	if err != nil {
+		return false
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return true
+		}
+	}
+
+	return false
+}
+
 // SSHArgs builds the argv for an `ssh` invocation scoped to a project-local
 // known_hosts file with strict host-key checking enabled -- the pinned key
 // is actually verified, unlike the old sysprep step which disabled checking
@@ -352,6 +371,18 @@ func WaitForCloudInit(ctx context.Context, keyPath, knownHostsFile string, port 
 	start := time.Now()
 
 	for attempt := 0; ; attempt++ {
+		// The host-key wait in startVM is bounded on its own and only
+		// warns when it gives up. Under TCG software emulation (no
+		// /dev/kvm, as on GitHub's arm64 runners) first boot can outlast
+		// it; without a pinned key every StrictHostKeyChecking=yes
+		// attempt below fails with "No ED25519 host key is known" for the
+		// whole cloud-init timeout. Keep trying to pin until it lands.
+		if !HasHostKey(knownHostsFile) {
+			if err := pinHostKeyOnce(deadlineCtx, knownHostsFile, port, 5*time.Second); err == nil {
+				fmt.Printf("host key pinned (%ds elapsed)\n", int(time.Since(start).Seconds()))
+			}
+		}
+
 		attemptCtx, cancelAttempt := context.WithTimeout(deadlineCtx, 15*time.Second)
 		_, err := RunSSH(attemptCtx, keyPath, knownHostsFile, port, user, host, "true")
 

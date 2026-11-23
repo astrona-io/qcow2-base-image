@@ -76,7 +76,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Hosted runners hard-stop at 360m; stay under it so a hung VM fails
     # with astroimg's own timeout error instead of a silent runner kill.
-    timeout-minutes: 350
+    timeout-minutes: ${{ matrix.arch == 'arm64' && 60 || 350 }}
     env:
       DISTRO: ${{ inputs.distro }}
       OS_VERSION: ${{ inputs.os_version }}
@@ -119,6 +119,28 @@ jobs:
             --arch "$ARCH" \
             --flatten="$FLATTEN" \
             --cloud-init-timeout "$CLOUD_INIT_TIMEOUT"
+
+      - name: Show guest serial console
+        # Headless QEMU writes the guest's serial console to
+        # .runtime/<tag>-console.log. When a boot stalls, its tail shows
+        # where (firmware, kernel, cloud-init, sshd) without a rerun.
+        if: ${{ failure() || cancelled() }}
+        run: |
+          shopt -s nullglob
+          for f in .runtime/*-console.log; do
+            echo "::group::tail of $f ($(wc -c < "$f") bytes)"
+            tail -n 300 "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Upload guest serial console
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: console-${{ inputs.distro }}${{ inputs.layer != '' && format('-{0}', inputs.layer) || '' }}-${{ matrix.arch }}
+          path: .runtime/*-console.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
