@@ -56,7 +56,9 @@ runs:
       # box -- this udev rule opens it up (0666) so QEMU can use it instead
       # of falling back to TCG. Best effort, not fatal: nested-virt support
       # isn't guaranteed uniform across GitHub's runner fleet, so some
-      # instances have no /dev/kvm at all.
+      # instances have no /dev/kvm at all. The ubuntu-24.04-arm runners
+      # never have it ("Failed to open the device 'kvm'"), so arm64 builds
+      # always run under TCG: expect about 1 h for the base image.
       shell: bash
       run: |
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
