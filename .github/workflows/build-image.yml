@@ -139,6 +139,9 @@ jobs:
         with:
           name: console-${{ inputs.distro }}${{ inputs.layer != '' && format('-{0}', inputs.layer) || '' }}-${{ matrix.arch }}
           path: .runtime/*-console.log
+          # .runtime is a dot-directory; upload-artifact skips hidden
+          # paths unless told otherwise.
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
 
